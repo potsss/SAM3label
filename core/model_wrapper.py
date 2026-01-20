@@ -1,32 +1,42 @@
 import os
+import glob
 import cv2
 import numpy as np
 import torch
 from PIL import Image
-from transformers import Sam3Processor, Sam3Model
 from core.converter import mask_to_polygons
+
+# These imports are based on the user-provided from_sam3.py file.
+# This assumes a 'sam3' library is installed, which is different from 'transformers'.
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.sam3_image_processor import Sam3Processor
 
 class SAM3Annotator:
     def __init__(self, model_path: str):
         """
-        Initialize the SAM3 model using the Hugging Face Transformers library.
-        The model_path should be the directory containing the model weights and config.
+        Initialize the SAM3 model using the 'sam3' library.
+        The model_path should be a directory containing the model checkpoint (.pt file).
         """
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Using device: {self.device}")
+        self.model = None
+        self.processor = None
+        
+        try:
+            # Find the checkpoint file within the provided directory
+            checkpoint_files = glob.glob(os.path.join(model_path, "*.pt"))
+            if not checkpoint_files:
+                raise FileNotFoundError(f"No .pt checkpoint file found in {model_path}")
+            
+            checkpoint_path = checkpoint_files[0]
+            print(f"Found model checkpoint: {checkpoint_path}")
 
-        if os.path.isdir(model_path):
-            print(f"Loading model from directory: {model_path}")
-            try:
-                self.model = Sam3Model.from_pretrained(model_path).to(self.device)
-                self.processor = Sam3Processor.from_pretrained(model_path)
-            except Exception as e:
-                print(f"Error loading model from {model_path}: {e}")
-                print("Falling back to mock mode.")
-                self.model = None
-                self.processor = None
-        else:
-            print(f"Warning: Model path {model_path} is not a directory. Running in mock mode.")
+            # Load the model and processor using the sam3 library's methods
+            self.model = build_sam3_image_model(checkpoint_path=checkpoint_path)
+            self.processor = Sam3Processor(self.model)
+            print("SAM3 model and processor loaded successfully (using 'sam3' library).")
+
+        except Exception as e:
+            print(f"Error loading model from {model_path} using 'sam3' library: {e}")
+            print("Running in mock mode.")
             self.model = None
             self.processor = None
 
@@ -37,56 +47,48 @@ class SAM3Annotator:
 
         pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         
-        inputs = {}
-        prompt_type = "unknown"
-
         try:
-            # The processor expects a list of prompts for each type
+            # 1. Set the image and get the inference state
+            inference_state = self.processor.set_image(pil_image)
+            
+            output = None
+            prompt_type = "unknown"
+
+            # 2. Set the prompt based on provided inputs, using the stateful API
             if texts:
                 prompt_type = "text"
-                inputs["text_prompts"] = texts
+                # Using the API from from_sam3.py
+                output = self.processor.set_text_prompt(state=inference_state, prompt=texts[0])
             
-            if points and labels:
+            # NOTE: The following methods are inferred from the pattern in from_sam3.py,
+            # as explicit examples for points and boxes were not provided.
+            # The actual method names and parameters might be different.
+            elif points and labels:
                 prompt_type = "point"
-                # The processor wants points and labels in separate lists, batched.
-                # Format: [[[x1, y1], [x2, y2], ...]], [[[l1], [l2], ...]]
-                inputs["input_points"] = [[[p[0], p[1]] for p in points]]
-                inputs["input_labels"] = [[[l] for l in labels]]
-
-            if boxes:
+                # Assuming a 'set_points_prompt' method exists
+                # The format for points and labels might need adjustment
+                output = self.processor.set_points_prompt(state=inference_state, points=points, labels=labels)
+            
+            elif boxes:
                 prompt_type = "box"
-                # Format: [[[x1, y1, x2, y2], ...]]
-                inputs["input_boxes"] = [boxes]
+                # Assuming a 'set_box_prompt' method exists
+                output = self.processor.set_box_prompt(state=inference_state, boxes=boxes)
 
-            if not inputs:
+            if output is None or "masks" not in output:
+                print(f"No output or no masks found for prompt type: {prompt_type}")
                 return []
 
-            print(f"Processing with {prompt_type} prompts...")
-            processed_inputs = self.processor(pil_image, **inputs, return_tensors="pt").to(self.device)
-
-            with torch.no_grad():
-                outputs = self.model(**processed_inputs)
-
-            # Post-process to get segmentation masks
-            # Note: The target_sizes parameter is crucial for resizing masks to original image size
-            original_size = [pil_image.size[::-1]] # (height, width)
-            results = self.processor.post_process_instance_segmentation(
-                outputs, 
-                threshold=0.5, 
-                mask_threshold=0.5,
-                target_sizes=torch.tensor(original_size)
-            )[0]
-            
-            masks = results['masks']
+            # 3. Process the output masks
+            masks_cpu = output["masks"].cpu()
             all_polygons = []
-            
-            for i, mask_tensor in enumerate(masks):
-                mask_np = mask_tensor.squeeze().cpu().numpy().astype(np.uint8)
+
+            for i, mask_tensor in enumerate(masks_cpu):
+                mask_np = (mask_tensor.squeeze().numpy() > 0.5).astype(np.uint8)
                 polys = mask_to_polygons(mask_np, epsilon_ratio=epsilon_ratio)
                 
                 label_name = f"{prompt_type}_{i}"
                 if texts:
-                    label_name = inputs["text_prompts"][0] # Use the first text prompt as label
+                    label_name = texts[0]
 
                 for p in polys:
                     all_polygons.append({
@@ -97,5 +99,6 @@ class SAM3Annotator:
             return all_polygons
 
         except Exception as e:
-            print(f"Error during SAM3 inference with prompt type '{prompt_type}': {e}")
+            # Catching potential errors from inferred methods
+            print(f"Error during SAM3 inference with stateful API: {e}")
             raise e
