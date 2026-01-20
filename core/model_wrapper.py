@@ -3,7 +3,8 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
-from sam3 import build_sam3_image_model, Sam3Processor
+from sam3.model_builder import build_sam3_image_model
+from sam3.model.sam3_image_processor import Sam3Processor
 from core.converter import mask_to_polygons
 
 class SAM3Annotator:
