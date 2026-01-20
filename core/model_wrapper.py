@@ -44,7 +44,7 @@ class SAM3Annotator:
             # The processor expects a list of prompts for each type
             if texts:
                 prompt_type = "text"
-                inputs["text_prompts"] = [t['text'] for t in texts]
+                inputs["text_prompts"] = texts
             
             if points and labels:
                 prompt_type = "point"
@@ -74,7 +74,7 @@ class SAM3Annotator:
                 outputs, 
                 threshold=0.5, 
                 mask_threshold=0.5,
-                original_sizes=original_size
+                target_sizes=torch.tensor(original_size)
             )[0]
             
             masks = results['masks']
