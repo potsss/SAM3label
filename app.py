@@ -9,7 +9,7 @@ app = FastAPI(title="SAM3 Annotation Service")
 
 # Initialize the annotator (Singleton)
 # On the server, ensure the 'sam3_model' directory exists
-MODEL_PATH = "sam3_model/"
+MODEL_PATH = "sam3/"
 annotator = SAM3Annotator(model_path=MODEL_PATH)
 
 @app.post("/predict", response_model=AnnotationResponse)
