@@ -8,8 +8,8 @@ import cv2
 app = FastAPI(title="SAM3 Annotation Service")
 
 # Initialize the annotator (Singleton)
-# On the server, ensure 'sam3_b.pt' exists in the working directory
-MODEL_PATH = os.getenv("SAM3_MODEL_PATH", "sam3.pt")
+# On the server, ensure 'sam3.pt' exists in the 'models' directory
+MODEL_PATH = "models/sam3.pt"
 annotator = SAM3Annotator(model_path=MODEL_PATH)
 
 @app.post("/predict", response_model=AnnotationResponse)

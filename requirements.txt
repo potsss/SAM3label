@@ -1,8 +1,11 @@
 fastapi
 uvicorn
-ultralytics
 opencv-python
 numpy
 pydantic
 python-multipart
 requests
+sam3
+torch
+torchvision
+Pillow

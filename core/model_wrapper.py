@@ -1,61 +1,101 @@
 import os
 import cv2
 import numpy as np
-from ultralytics import SAM
+import torch
+from PIL import Image
+from sam3 import build_sam3_image_model, Sam3Processor
 from core.converter import mask_to_polygons
 
 class SAM3Annotator:
-    def __init__(self, model_path: str = "sam3_b.pt"):
+    def __init__(self, model_path: str):
         """
-        Initialize the SAM3 model using Ultralytics.
-        On your laptop, this might fail if the file is missing, 
-        but the logic will be ready for the server.
+        Initialize the SAM3 model using the official sam3 library.
         """
-        # In a real scenario, we check if the model exists
         if os.path.exists(model_path):
-            self.model = SAM(model_path)
+            print(f"Loading model from: {model_path}")
+            self.model = build_sam3_image_model(checkpoint_path=model_path)
+            self.processor = Sam3Processor(self.model)
+            # Move model to GPU if available
+            if torch.cuda.is_available():
+                self.model.to('cuda')
+                print("SAM3 model moved to GPU.")
         else:
             print(f"Warning: Model file {model_path} not found. Running in mock mode.")
             self.model = None
+            self.processor = None
 
     def predict(self, image: np.ndarray, points=None, labels=None, boxes=None, texts=None, epsilon_ratio=0.005):
-        if self.model is None:
+        if self.processor is None:
             # Mock return for testing without model
+            print("Running in mock mode.")
             return [{"points": [[10, 10], [100, 10], [100, 100]], "label": "mock_obj"}]
 
-        # Ultralytics SAM3 supports:
-        # points: [[x, y], ...]
-        # labels: [1, 0, ...]
-        # bboxes: [x1, y1, x2, y2]
-        # texts: ["description1", "description2"] (Core SAM3 feature)
+        # Convert cv2 image (BGR) to PIL image (RGB)
+        pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         
-        results = self.model.predict(
-            source=image,
-            points=points if points else None,
-            labels=labels if labels else None,
-            bboxes=boxes if boxes else None,
-            texts=texts if texts else None,
-            device="cuda" if (hasattr(self.model, 'device') and self.model.device.type == "cuda") else "cpu"
-        )
+        # 1. Set the image
+        try:
+            inference_state = self.processor.set_image(pil_image)
+        except Exception as e:
+            raise RuntimeError(f"Failed to set image for processor: {e}")
 
-        all_polygons = []
-        for result in results:
-            if result.masks is not None:
-                # Iterate through each mask found
-                # result.names contains labels for text prompts if available
-                for i, mask_data in enumerate(result.masks.data):
-                    mask_np = mask_data.cpu().numpy()
-                    polys = mask_to_polygons(mask_np, epsilon_ratio=epsilon_ratio)
-                    
-                    # Try to get a meaningful label (e.g., from text prompts)
-                    label_name = f"object_{i}"
-                    if hasattr(result, 'names') and i in result.names:
-                        label_name = result.names[i]
-                    
-                    for p in polys:
-                        all_polygons.append({
-                            "points": p,
-                            "label": label_name
-                        })
-        
-        return all_polygons
+        # 2. Apply prompts
+        # The sam3 processor seems to handle one prompt type at a time.
+        # We'll prioritize text, then points, then boxes.
+        output = None
+        prompt_type = "unknown"
+
+        try:
+            if texts:
+                prompt_type = "text"
+                prompt_text = texts[0]['text']
+                print(f"Applying text prompt: {prompt_text}")
+                output = self.processor.set_text_prompt(state=inference_state, prompt=prompt_text)
+            elif points and labels:
+                prompt_type = "point"
+                print(f"Applying point prompt: {points}")
+                # The processor expects points in a torch tensor: [[x, y, label], ...]
+                # label 1=fg, 0=bg
+                point_prompts = [[p[0], p[1], l] for p, l in zip(points, labels)]
+                output = self.processor.set_point_prompt(state=inference_state, points=point_prompts)
+            elif boxes:
+                prompt_type = "box"
+                print(f"Applying box prompt: {boxes}")
+                # The processor expects boxes in a list of lists: [[x1, y1, x2, y2], ...]
+                output = self.processor.set_box_prompt(state=inference_state, boxes=boxes)
+            else:
+                # No prompts provided
+                return []
+
+            if output is None or not output.get('masks'):
+                print("Model returned no output or no masks for the given prompt.")
+                return []
+
+            # 3. Process masks
+            # Output contains 'masks', 'scores', 'logits'
+            masks = output['masks']
+            all_polygons = []
+            
+            for i, mask_tensor in enumerate(masks):
+                # Convert torch tensor to numpy array for processing
+                mask_np = mask_tensor.squeeze().cpu().numpy().astype(np.uint8)
+                
+                # Use the existing converter
+                polys = mask_to_polygons(mask_np, epsilon_ratio=epsilon_ratio)
+                
+                label_name = f"{prompt_type}_{i}"
+                if texts:
+                    label_name = texts[0]['text']
+
+                for p in polys:
+                    all_polygons.append({
+                        "points": p,
+                        "label": label_name
+                    })
+            
+            return all_polygons
+
+        except Exception as e:
+            print(f"Error during SAM3 inference with prompt type '{prompt_type}': {e}")
+            # Re-raise the exception to be caught by the FastAPI error handler
+            raise e

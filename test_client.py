@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 # Configuration
-API_URL = "http://localhost:8000/predict"
+API_URL = "http://localhost:8059/predict"
 TEST_IMAGE_PATH = "test.jpg"  # Please make sure this image exists!
 OUTPUT_DIR = "test_results"
 

@@ -8,8 +8,8 @@ import argparse
 
 # Configuration
 API_URL_FORMAT = "http://{}:{}/predict"
-DEFAULT_SERVER_IP = "172.21.88.67"
-DEFAULT_PORT = 8000
+DEFAULT_SERVER_IP = "112.51.6.147"
+DEFAULT_PORT = 8069
 TEST_IMAGE_PATH = "test.jpg"  # Please make sure this image exists!
 OUTPUT_DIR = "test_results"
 
