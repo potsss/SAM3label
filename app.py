@@ -9,7 +9,7 @@ app = FastAPI(title="SAM3 Annotation Service")
 
 # Initialize the annotator (Singleton)
 # On the server, ensure 'sam3_b.pt' exists in the working directory
-MODEL_PATH = os.getenv("SAM3_MODEL_PATH", "sam3_b.pt")
+MODEL_PATH = os.getenv("SAM3_MODEL_PATH", "sam3.pt")
 annotator = SAM3Annotator(model_path=MODEL_PATH)
 
 @app.post("/predict", response_model=AnnotationResponse)
@@ -75,4 +75,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8059)

@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+/test_results/
+core/__pycache__/
+utils/__pycache__/
