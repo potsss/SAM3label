@@ -76,10 +76,11 @@ class SAM3Annotator:
                     images=pil_image, input_points=input_points, input_labels=input_labels, return_tensors="pt"
                 ).to(self.device)
                 with torch.no_grad():
-                    outputs = self.pvs_model(**inputs)
-
-                # Use the PVS post-processor
-                masks_tensor = self.pvs_processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"].cpu())[0]
+                masks_tensor = self.pvs_processor.post_process_masks(
+                    outputs.pred_masks.cpu(),
+                    inputs["original_sizes"].cpu(),
+                    inputs["reshaped_input_sizes"].cpu()
+                )[0]
                 label_name = "point_prompt"
 
 
@@ -96,7 +97,11 @@ class SAM3Annotator:
                     outputs = self.pvs_model(**inputs, multimask_output=False)
                 
                 # Use the PVS post-processor
-                masks_tensor = self.pvs_processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"].cpu())[0]
+                masks_tensor = self.pvs_processor.post_process_masks(
+                    outputs.pred_masks.cpu(),
+                    inputs["original_sizes"].cpu(),
+                    inputs["reshaped_input_sizes"].cpu()
+                )[0]
                 label_name = "box_prompt"
 
             else:
