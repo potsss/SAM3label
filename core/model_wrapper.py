@@ -22,16 +22,16 @@ class SAM3Annotator:
         hf_model_name = "facebook/sam3"
         
         try:
-            # 1. Load PCS Model and Processor (for text prompts)
-            print("Loading SAM3 PCS Model (for text prompts)...")
-            self.pcs_model = Sam3Model.from_pretrained(hf_model_name, cache_dir=model_path).to(self.device)
-            self.pcs_processor = Sam3Processor.from_pretrained(hf_model_name, cache_dir=model_path)
+            # 1. Load PCS Model and Processor (for text prompts) from the local directory
+            print("Loading SAM3 PCS Model (for text prompts) from local path...")
+            self.pcs_model = Sam3Model.from_pretrained(model_path).to(self.device)
+            self.pcs_processor = Sam3Processor.from_pretrained(model_path)
             print("PCS Model and Processor loaded successfully.")
 
-            # 2. Load PVS/Tracker Model and Processor (for point/box prompts)
-            print("Loading SAM3 PVS/Tracker Model (for point/box prompts)...")
-            self.pvs_model = Sam3TrackerModel.from_pretrained(hf_model_name, cache_dir=model_path).to(self.device)
-            self.pvs_processor = Sam3TrackerProcessor.from_pretrained(hf_model_name, cache_dir=model_path)
+            # 2. Load PVS/Tracker Model and Processor (for point/box prompts) from the local directory
+            print("Loading SAM3 PVS/Tracker Model (for point/box prompts) from local path...")
+            self.pvs_model = Sam3TrackerModel.from_pretrained(model_path).to(self.device)
+            self.pvs_processor = Sam3TrackerProcessor.from_pretrained(model_path)
             print("PVS/Tracker Model and Processor loaded successfully.")
 
         except Exception as e:
