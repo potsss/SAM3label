@@ -1,11 +1,21 @@
 import os
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from schemas.api import AnnotationRequest, AnnotationResponse, Polygon
 from core.model_wrapper import SAM3Annotator
 from utils.image_utils import base64_to_cv2
 import cv2
 
 app = FastAPI(title="SAM3 Annotation Service")
+
+# Add CORS middleware to allow requests from the web client
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all origins
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows all methods (GET, POST, etc.)
+    allow_headers=["*"],  # Allows all headers
+)
 
 # Initialize the annotator (Singleton)
 # On the server, ensure the 'sam3_model' directory exists
