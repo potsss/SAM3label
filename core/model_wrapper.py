@@ -65,19 +65,25 @@ class SAM3Annotator:
             elif points and labels:
                 # --- POINT PROMPT (PVS/Tracker) ---
                 print("Processing with Point Prompt (PVS/Tracker Model)...")
-                # Format the input as per the documentation: [batch, object, point, coords]
-                input_points = [[points]] # e.g., [[[250, 250]]]
-                input_labels = [[labels]] # e.g., [[[1]]]
+                # The user can provide multiple points. Each point is treated as a prompt for a separate object.
+                # The processor expects a 4D list for points: (batch_size, num_objects, num_points_per_object, 2)
+                # and a 3D list for labels: (batch_size, num_objects, num_points_per_object).
+                # We reshape the incoming flat lists of points and labels accordingly.
+                input_points = [[ [p] for p in points ]]  # Shape: (1, num_objects, 1, 2)
+                input_labels = [[ [l] for l in labels ]]  # Shape: (1, num_objects, 1)
 
                 inputs = self.pvs_processor(
                     images=pil_image, input_points=input_points, input_labels=input_labels, return_tensors="pt"
                 ).to(self.device)
                 with torch.no_grad():
-                    outputs = self.pvs_model(**inputs)
-                
+                    # multimask_output=False ensures one mask per object, which is desired here.
+                    outputs = self.pvs_model(**inputs, multimask_output=False)
+
                 # Use the PVS post-processor
                 masks_tensor = self.pvs_processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"].cpu())[0]
-                label_name = f"point_{points[0][0]}_{points[0][1]}"
+                # For multiple objects, we can't use a single label. The post-processing loop will handle it.
+                label_name = "point_prompt"
+
 
             elif boxes:
                 # --- BOX PROMPT (PVS/Tracker) ---
@@ -93,7 +99,7 @@ class SAM3Annotator:
                 
                 # Use the PVS post-processor
                 masks_tensor = self.pvs_processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"].cpu())[0]
-                label_name = f"box_{boxes[0][0]}_{boxes[0][1]}"
+                label_name = "box_prompt"
 
             else:
                 return []
@@ -105,14 +111,23 @@ class SAM3Annotator:
                 # Take the first mask for each object
                 masks_tensor = masks_tensor[:, 0, :, :]
 
-            for mask_tensor in masks_tensor:
+            for i, mask_tensor in enumerate(masks_tensor):
                 mask_np = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
                 polys = mask_to_polygons(mask_np, epsilon_ratio=epsilon_ratio)
+
+                # For PVS multi-prompt, create a unique label for each resulting mask.
+                # For PCS (text), all masks correspond to the same text concept.
+                if points:
+                    current_label = f"point_{i}"
+                elif boxes:
+                    current_label = f"box_{i}"
+                else: # This covers the 'texts' case
+                    current_label = label_name
                 
                 for p in polys:
                     all_polygons.append({
                         "points": p,
-                        "label": label_name
+                        "label": current_label
                     })
             
             return all_polygons
