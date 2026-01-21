@@ -65,23 +65,21 @@ class SAM3Annotator:
             elif points and labels:
                 # --- POINT PROMPT (PVS/Tracker) ---
                 print("Processing with Point Prompt (PVS/Tracker Model)...")
-                # The user can provide multiple points. Each point is treated as a prompt for a separate object.
+                # All points are treated as refinement for a single object.
                 # The processor expects a 4D list for points: (batch_size, num_objects, num_points_per_object, 2)
                 # and a 3D list for labels: (batch_size, num_objects, num_points_per_object).
-                # We reshape the incoming flat lists of points and labels accordingly.
-                input_points = [[ [p] for p in points ]]  # Shape: (1, num_objects, 1, 2)
-                input_labels = [[ [l] for l in labels ]]  # Shape: (1, num_objects, 1)
+                # For refinement, num_objects is 1.
+                input_points = [[points]]  # Shape: (1, 1, num_points, 2)
+                input_labels = [[labels]]  # Shape: (1, 1, num_points)
 
                 inputs = self.pvs_processor(
                     images=pil_image, input_points=input_points, input_labels=input_labels, return_tensors="pt"
                 ).to(self.device)
                 with torch.no_grad():
-                    # multimask_output=False ensures one mask per object, which is desired here.
-                    outputs = self.pvs_model(**inputs, multimask_output=False)
+                    outputs = self.pvs_model(**inputs)
 
                 # Use the PVS post-processor
                 masks_tensor = self.pvs_processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"].cpu())[0]
-                # For multiple objects, we can't use a single label. The post-processing loop will handle it.
                 label_name = "point_prompt"
 
 
@@ -95,7 +93,7 @@ class SAM3Annotator:
                     images=pil_image, input_boxes=input_boxes, return_tensors="pt"
                 ).to(self.device)
                 with torch.no_grad():
-                    outputs = self.pvs_model(**inputs)
+                    outputs = self.pvs_model(**inputs, multimask_output=False)
                 
                 # Use the PVS post-processor
                 masks_tensor = self.pvs_processor.post_process_masks(outputs.pred_masks.cpu(), inputs["original_sizes"].cpu())[0]
