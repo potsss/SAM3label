@@ -100,7 +100,7 @@ def send_request(api_url, payload, description):
         return []
 
 def main():
-    parser = argparse.ArgumentParser(description="Send randomized test requests to the SAM3 annotation server.")
+    parser = argparse.ArgumentParser(description="Send test requests to the SAM3 annotation server.")
     parser.add_argument("--ip", type=str, default=DEFAULT_SERVER_IP, help=f"Server IP address (default: {DEFAULT_SERVER_IP})")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Server port (default: {DEFAULT_PORT})")
     args = parser.parse_args()
@@ -110,8 +110,39 @@ def main():
 
     # 1. Prepare Image
     image_b64 = encode_image(TEST_IMAGE_PATH)
-    
-    # 2. Test Case A: 10 Random Points in Circle
+
+    # 2. Test Case A: Text Prompt
+    print("\n--- NEW TESTS ---")
+    payload_text = {
+        "image_base64": image_b64,
+        "texts": [{"text": "red circle"}],
+        "epsilon_ratio": 0.005
+    }
+    polys_text = send_request(api_url, payload_text, "Text Prompt ('red circle')")
+    visualize_result(TEST_IMAGE_PATH, polys_text, [], [], "result_text.jpg")
+
+    # 3. Test Case B: Single Point Prompt
+    single_point = [{"point": [250, 250], "label": 1}]
+    payload_single_point = {
+        "image_base64": image_b64,
+        "points": single_point,
+        "epsilon_ratio": 0.005
+    }
+    polys_single_point = send_request(api_url, payload_single_point, "Single Point Prompt (Center)")
+    visualize_result(TEST_IMAGE_PATH, polys_single_point, single_point, [], "result_single_point.jpg")
+
+    # 4. Test Case C: Single Box Prompt
+    single_box = [{"box": [150, 150, 350, 350]}] # Box containing the circle
+    payload_single_box = {
+        "image_base64": image_b64,
+        "boxes": single_box,
+        "epsilon_ratio": 0.005
+    }
+    polys_single_box = send_request(api_url, payload_single_box, "Single Box Prompt (Around Circle)")
+    visualize_result(TEST_IMAGE_PATH, polys_single_box, [], single_box, "result_single_box.jpg")
+
+    # 5. Test Case D: 10 Random Points in Circle (Multi-Point)
+    print("\n--- EXISTING TESTS ---")
     random_points = generate_random_points_in_circle(10)
     payload_points = {
         "image_base64": image_b64,
@@ -121,7 +152,7 @@ def main():
     polys_points = send_request(api_url, payload_points, "10 Random Points in Circle")
     visualize_result(TEST_IMAGE_PATH, polys_points, random_points, [], "result_random_points.jpg")
 
-    # 3. Test Case B: 5 Random Boxes around Circle
+    # 6. Test Case E: 5 Random Boxes around Circle (Multi-Box)
     random_boxes = generate_random_boxes_for_circle(5)
     payload_boxes = {
         "image_base64": image_b64,
