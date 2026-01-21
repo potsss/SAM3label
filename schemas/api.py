@@ -15,10 +15,10 @@ class AnnotationRequest(BaseModel):
     # Threshold for polygon simplification
     epsilon_ratio: float = Field(0.005, description="Ratio for Douglas-Peucker simplification. Smaller = more detail.")
 
-class Polygon(BaseModel):
-    points: List[List[float]] # [[x1, y1], [x2, y2], ...]
+class MaskResult(BaseModel):
     label: str
+    mask_base64: str # A base64 encoded PNG string of the mask
 
 class AnnotationResponse(BaseModel):
-    polygons: List[Polygon]
+    masks: List[MaskResult]
     message: str = "Success"

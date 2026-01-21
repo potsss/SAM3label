@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from schemas.api import AnnotationRequest, AnnotationResponse, Polygon
+from schemas.api import AnnotationRequest, AnnotationResponse, MaskResult
 from core.model_wrapper import SAM3Annotator
 from utils.image_utils import base64_to_cv2
 import cv2
@@ -53,21 +53,17 @@ async def predict_annotation(request: AnnotationRequest):
 
     # 3. Inference
     try:
-        results = annotator.predict(
+        # The predict function now returns a list of dictionaries with mask and label
+        mask_results = annotator.predict(
             image=image,
             boxes=boxes if boxes else None,
-            texts=texts if texts else None,
-            epsilon_ratio=request.epsilon_ratio
+            texts=texts if texts else None
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Inference error: {str(e)}")
 
     # 4. Format Response
-    response_polygons = [
-        Polygon(points=p["points"], label=p["label"]) for p in results
-    ]
-
-    return AnnotationResponse(polygons=response_polygons)
+    return AnnotationResponse(masks=mask_results)
 
 @app.get("/health")
 async def health_check():

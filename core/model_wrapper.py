@@ -7,7 +7,16 @@ from PIL import Image
 # Imports based on the new, correct documentation from Hugging Face
 from transformers import Sam3Model, Sam3Processor
 
-from core.converter import mask_to_polygons
+import os
+import cv2
+import numpy as np
+import torch
+from PIL import Image
+import io
+import base64
+
+# Imports based on the new, correct documentation from Hugging Face
+from transformers import Sam3Model, Sam3Processor
 
 class SAM3Annotator:
     def __init__(self, model_path: str):
@@ -28,10 +37,10 @@ class SAM3Annotator:
             print(f"An error occurred during model loading: {e}")
             self.pcs_model = None
 
-    def predict(self, image: np.ndarray, boxes=None, texts=None, epsilon_ratio=0.005):
+    def predict(self, image: np.ndarray, boxes=None, texts=None):
         if not self.pcs_model:
             print("Running in mock mode due to model loading failure.")
-            return [{"points": [[10, 10], [100, 10], [100, 100]], "label": "mock_obj"}]
+            return [{"label": "mock_obj", "mask_base64": ""}]
 
         pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         
@@ -42,11 +51,6 @@ class SAM3Annotator:
             processor_args = {'images': pil_image, 'return_tensors': 'pt'}
             base_label = "prompt"
             
-            # The model does not natively support "find text in box".
-            # The workaround is to find all instances of the text, then filter them
-            # to see which ones are inside the user-provided boxes.
-            
-            # For mixed prompts, we ignore the boxes during the initial API call.
             is_mixed_prompt = texts and boxes
             
             if texts:
@@ -54,7 +58,6 @@ class SAM3Annotator:
                 base_label = texts[0]
             
             if boxes and not is_mixed_prompt:
-                # Only add boxes to the processor if it's a box-only prompt
                 processor_args['input_boxes'] = [boxes] 
                 box_labels = [1] * len(boxes)
                 processor_args['input_boxes_labels'] = [box_labels]
@@ -73,7 +76,6 @@ class SAM3Annotator:
                 target_sizes=[pil_image.size[::-1]]
             )[0]
             
-            # Post-processing for mixed prompts (text + box)
             if is_mixed_prompt:
                 print("Filtering results for mixed prompt...")
                 filtered_masks = []
@@ -81,28 +83,40 @@ class SAM3Annotator:
                 result_masks = results["masks"]
 
                 for i, res_box in enumerate(result_boxes):
-                    # Calculate center of the mask's bounding box
                     center_x = (res_box[0] + res_box[2]) / 2
                     center_y = (res_box[1] + res_box[3]) / 2
 
-                    # Check if the center is inside any of the user-provided prompt boxes
                     for user_box in boxes:
                         if (center_x >= user_box[0] and center_x <= user_box[2] and
                             center_y >= user_box[1] and center_y <= user_box[3]):
                             filtered_masks.append(result_masks[i])
-                            break # Found a match, no need to check other user boxes
+                            break
                 
                 masks_tensor = torch.stack(filtered_masks) if filtered_masks else torch.empty(0)
             else:
                 masks_tensor = results["masks"]
 
-            # Convert final masks to polygons
-            all_polygons = []
+            # Convert final masks to base64 PNGs
+            output_masks = []
             for i, mask_tensor in enumerate(masks_tensor):
-                polys = mask_to_polygons((mask_tensor.cpu().numpy() > 0.5).astype(np.uint8), epsilon_ratio=epsilon_ratio)
-                for p in polys:
-                     all_polygons.append({"points": p, "label": f"{base_label}_{i}"})
-            return all_polygons
+                mask_np = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
+                
+                # Create a colored RGBA image for the mask
+                colored_mask = np.zeros((mask_np.shape[0], mask_np.shape[1], 4), dtype=np.uint8)
+                # Assign a color (e.g., cyan with transparency)
+                color = np.array([0, 255, 255, 128], dtype=np.uint8) 
+                colored_mask[mask_np == 1] = color
+
+                mask_img = Image.fromarray(colored_mask, 'RGBA')
+                buffer = io.BytesIO()
+                mask_img.save(buffer, format="PNG")
+                img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                
+                output_masks.append({
+                    "label": f"{base_label}_{i}",
+                    "mask_base64": f"data:image/png;base64,{img_str}"
+                })
+            return output_masks
 
         except Exception as e:
             print(f"Error during SAM3 inference: {e}")
