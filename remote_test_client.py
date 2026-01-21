@@ -12,7 +12,7 @@ import math
 API_URL_FORMAT = "http://{}:{}/predict"
 DEFAULT_SERVER_IP = "112.51.6.147"
 DEFAULT_PORT = 8069
-TEST_IMAGE_PATH = "test.jpg"
+TEST_IMAGE_PATH = "test1.jpg"
 OUTPUT_DIR = "test_results"
 
 # Red Circle Geometry
@@ -115,10 +115,10 @@ def main():
     print("\n--- NEW TESTS ---")
     payload_text = {
         "image_base64": image_b64,
-        "texts": [{"text": "red circle"}],
+        "texts": [{"text": "sofa"}],
         "epsilon_ratio": 0.005
     }
-    polys_text = send_request(api_url, payload_text, "Text Prompt ('red circle')")
+    polys_text = send_request(api_url, payload_text, "Text Prompt ('sofa')")
     visualize_result(TEST_IMAGE_PATH, polys_text, [], [], "result_text.jpg")
 
     # 3. Test Case B: Single Point Prompt
