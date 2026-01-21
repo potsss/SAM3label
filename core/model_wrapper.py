@@ -86,23 +86,24 @@ class SAM3Annotator:
             else:
                 # --- TEXT, BOX, or MIXED PROMPT (PCS Model) ---
                 print("Processing with Text/Box/Mixed Prompt (PCS Model)...")
+                
                 processor_args = {'images': pil_image, 'return_tensors': 'pt'}
+                base_label = "prompt"
                 
                 if texts:
-                    processor_args['text'] = texts
+                    # Use only the first text prompt, even if multiple are sent.
+                    processor_args['text'] = texts[0]
+                    base_label = texts[0]
                 
                 if boxes:
-                    # The PCS model expects boxes in a slightly different format than PVS
                     processor_args['input_boxes'] = [boxes] 
-                    # For combined prompts, labels are necessary. Assuming positive boxes.
                     box_labels = [1] * len(boxes)
                     processor_args['input_boxes_labels'] = [box_labels]
+                    if not texts:
+                        base_label = "box"
 
-                if not texts and not boxes:
-                    # If it's a box-only prompt, it could have been handled by PVS,
-                    # but routing here is fine. We just need to ensure there is something to process.
-                    if not boxes:
-                        return []
+                if 'text' not in processor_args and 'input_boxes' not in processor_args:
+                    return []
 
                 inputs = self.pcs_processor(**processor_args).to(self.device)
                 with torch.no_grad():
@@ -115,13 +116,6 @@ class SAM3Annotator:
                 
                 masks_tensor = results["masks"]
                 
-                # Labeling for PCS prompts
-                # The model may return many instances for a single text prompt.
-                # We will label them based on the first text prompt or just 'box'
-                base_label = "box"
-                if texts:
-                    base_label = texts[0]
-
                 all_polygons = []
                 for i, mask_tensor in enumerate(masks_tensor):
                     polys = mask_to_polygons((mask_tensor.cpu().numpy() > 0.5).astype(np.uint8), epsilon_ratio=epsilon_ratio)
