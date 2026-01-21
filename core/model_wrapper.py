@@ -66,21 +66,25 @@ class SAM3Annotator:
                 # --- POINT PROMPT (PVS/Tracker) ---
                 print("Processing with Point Prompt (PVS/Tracker Model)...")
                 # All points are treated as refinement for a single object.
-                # The processor expects a 4D list for points: (batch_size, num_objects, num_points_per_object, 2)
-                # and a 3D list for labels: (batch_size, num_objects, num_points_per_object).
-                # For refinement, num_objects is 1.
-                input_points = [[points]]  # Shape: (1, 1, num_points, 2)
-                input_labels = [[labels]]  # Shape: (1, 1, num_points)
+                input_points = [[points]]
+                input_labels = [[labels]]
 
                 inputs = self.pvs_processor(
                     images=pil_image, input_points=input_points, input_labels=input_labels, return_tensors="pt"
                 ).to(self.device)
+                
                 with torch.no_grad():
-                masks_tensor = self.pvs_processor.post_process_masks(
+                    outputs = self.pvs_model(**inputs)
+
+                # Use the PVS post-processor, defensively checking for reshaped_input_sizes
+                post_process_args = (
                     outputs.pred_masks.cpu(),
                     inputs["original_sizes"].cpu(),
-                    inputs["reshaped_input_sizes"].cpu()
-                )[0]
+                )
+                if "reshaped_input_sizes" in inputs:
+                    post_process_args += (inputs["reshaped_input_sizes"].cpu(),)
+                
+                masks_tensor = self.pvs_processor.post_process_masks(*post_process_args)[0]
                 label_name = "point_prompt"
 
 
@@ -96,12 +100,15 @@ class SAM3Annotator:
                 with torch.no_grad():
                     outputs = self.pvs_model(**inputs, multimask_output=False)
                 
-                # Use the PVS post-processor
-                masks_tensor = self.pvs_processor.post_process_masks(
+                # Use the PVS post-processor, defensively checking for reshaped_input_sizes
+                post_process_args = (
                     outputs.pred_masks.cpu(),
                     inputs["original_sizes"].cpu(),
-                    inputs["reshaped_input_sizes"].cpu()
-                )[0]
+                )
+                if "reshaped_input_sizes" in inputs:
+                    post_process_args += (inputs["reshaped_input_sizes"].cpu(),)
+                
+                masks_tensor = self.pvs_processor.post_process_masks(*post_process_args)[0]
                 label_name = "box_prompt"
 
             else:
