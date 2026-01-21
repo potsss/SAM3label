@@ -41,13 +41,6 @@ async def predict_annotation(request: AnnotationRequest):
         raise HTTPException(status_code=400, detail="Failed to decode image")
 
     # 2. Prepare Prompts
-    points = []
-    labels = []
-    if request.points:
-        for p in request.points:
-            points.append(p.point)
-            labels.append(p.label)
-
     boxes = []
     if request.boxes:
         for b in request.boxes:
@@ -60,11 +53,8 @@ async def predict_annotation(request: AnnotationRequest):
 
     # 3. Inference
     try:
-        # Note: Depending on the exact SAM3 API in Ultralytics, 
-        # parameters might need slight adjustment (e.g., passing labels)
         results = annotator.predict(
             image=image,
-            points=points if points else None,
             boxes=boxes if boxes else None,
             texts=texts if texts else None,
             epsilon_ratio=request.epsilon_ratio

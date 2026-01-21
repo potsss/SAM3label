@@ -1,10 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Union
 
-class PointPrompt(BaseModel):
-    point: List[float] = Field(..., description="[x, y] coordinates")
-    label: int = Field(1, description="1 for positive, 0 for negative")
-
 class BoxPrompt(BaseModel):
     box: List[float] = Field(..., description="[x1, y1, x2, y2] coordinates")
 
@@ -14,7 +10,6 @@ class TextPrompt(BaseModel):
 class AnnotationRequest(BaseModel):
     image_base64: Optional[str] = None
     image_path: Optional[str] = None
-    points: Optional[List[PointPrompt]] = None
     boxes: Optional[List[BoxPrompt]] = None
     texts: Optional[List[TextPrompt]] = None
     # Threshold for polygon simplification
