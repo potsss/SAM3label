@@ -47,26 +47,16 @@ class SAM3Annotator:
         pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         
         try:
-            if texts:
-                # --- TEXT PROMPT (PCS) ---
-                print("Processing with Text Prompt (PCS Model)...")
-                inputs = self.pcs_processor(images=pil_image, text=texts[0], return_tensors="pt").to(self.device)
-                with torch.no_grad():
-                    outputs = self.pcs_model(**inputs)
-                
-                # Use the PCS post-processor
-                results = self.pcs_processor.post_process_instance_segmentation(
-                    outputs, threshold=0.5, mask_threshold=0.5,
-                    target_sizes=[pil_image.size[::-1]]
-                )[0]
-                masks_tensor = results["masks"]
-                label_name = texts[0]
+            # PVS model is only for point-based prompts (or box-only prompts without text).
+            # PCS model handles text, boxes, and mixed prompts.
+            # We will route to PVS only if points are the *only* prompt.
+            # Otherwise, we use the more versatile PCS model.
+            
+            is_point_only_prompt = points and not texts
 
-            elif points and labels:
-                # --- POINT PROMPT (PVS/Tracker) ---
+            if is_point_only_prompt:
+                # --- POINT PROMPT (PVS/Tracker Model) ---
                 print("Processing with Point Prompt (PVS/Tracker Model)...")
-                # Treat each point as a prompt for a new object.
-                # This handles both single and multiple point cases.
                 input_points = [[ [p] for p in points ]]
                 input_labels = [[ [l] for l in labels ]]
 
@@ -75,74 +65,69 @@ class SAM3Annotator:
                 ).to(self.device)
                 
                 with torch.no_grad():
-                    # multimask_output=False is recommended to get one mask per object prompt.
                     outputs = self.pvs_model(**inputs, multimask_output=False)
 
-                # Use the PVS post-processor, defensively checking for reshaped_input_sizes
-                post_process_args = (
-                    outputs.pred_masks.cpu(),
-                    inputs["original_sizes"].cpu(),
-                )
+                post_process_args = (outputs.pred_masks.cpu(), inputs["original_sizes"].cpu())
                 if "reshaped_input_sizes" in inputs:
                     post_process_args += (inputs["reshaped_input_sizes"].cpu(),)
                 
                 masks_tensor = self.pvs_processor.post_process_masks(*post_process_args)[0]
-                label_name = "point_prompt"
-
-
-            elif boxes:
-                # --- BOX PROMPT (PVS/Tracker) ---
-                print("Processing with Box Prompt (PVS/Tracker Model)...")
-                # Format the input as per the documentation: [batch, num_boxes, 4]
-                input_boxes = [boxes] # e.g., [[[40, 40, 160, 160]]]
-
-                inputs = self.pvs_processor(
-                    images=pil_image, input_boxes=input_boxes, return_tensors="pt"
-                ).to(self.device)
-                with torch.no_grad():
-                    outputs = self.pvs_model(**inputs, multimask_output=False)
                 
-                # Use the PVS post-processor, defensively checking for reshaped_input_sizes
-                post_process_args = (
-                    outputs.pred_masks.cpu(),
-                    inputs["original_sizes"].cpu(),
-                )
-                if "reshaped_input_sizes" in inputs:
-                    post_process_args += (inputs["reshaped_input_sizes"].cpu(),)
-                
-                masks_tensor = self.pvs_processor.post_process_masks(*post_process_args)[0]
-                label_name = "box_prompt"
+                # Labeling for point prompts
+                all_polygons = []
+                if masks_tensor.dim() == 4:
+                    masks_tensor = masks_tensor[:, 0, :, :]
+                for i, mask_tensor in enumerate(masks_tensor):
+                    polys = mask_to_polygons((mask_tensor.cpu().numpy() > 0.5).astype(np.uint8), epsilon_ratio=epsilon_ratio)
+                    for p in polys:
+                        all_polygons.append({"points": p, "label": f"point_{i}"})
+                return all_polygons
 
             else:
-                return []
-
-            # --- Convert masks to polygons ---
-            all_polygons = []
-            # For PVS, the output might have an extra dimension for multimask output
-            if masks_tensor.dim() == 4: # [num_objects, num_masks_per_obj, H, W]
-                # Take the first mask for each object
-                masks_tensor = masks_tensor[:, 0, :, :]
-
-            for i, mask_tensor in enumerate(masks_tensor):
-                mask_np = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
-                polys = mask_to_polygons(mask_np, epsilon_ratio=epsilon_ratio)
-
-                # For PVS multi-prompt, create a unique label for each resulting mask.
-                # For PCS (text), all masks correspond to the same text concept.
-                if points:
-                    current_label = f"point_{i}"
-                elif boxes:
-                    current_label = f"box_{i}"
-                else: # This covers the 'texts' case
-                    current_label = label_name
+                # --- TEXT, BOX, or MIXED PROMPT (PCS Model) ---
+                print("Processing with Text/Box/Mixed Prompt (PCS Model)...")
+                processor_args = {'images': pil_image, 'return_tensors': 'pt'}
                 
-                for p in polys:
-                    all_polygons.append({
-                        "points": p,
-                        "label": current_label
-                    })
-            
-            return all_polygons
+                if texts:
+                    processor_args['text'] = texts
+                
+                if boxes:
+                    # The PCS model expects boxes in a slightly different format than PVS
+                    processor_args['input_boxes'] = [boxes] 
+                    # For combined prompts, labels are necessary. Assuming positive boxes.
+                    box_labels = [1] * len(boxes)
+                    processor_args['input_boxes_labels'] = [box_labels]
+
+                if not texts and not boxes:
+                    # If it's a box-only prompt, it could have been handled by PVS,
+                    # but routing here is fine. We just need to ensure there is something to process.
+                    if not boxes:
+                        return []
+
+                inputs = self.pcs_processor(**processor_args).to(self.device)
+                with torch.no_grad():
+                    outputs = self.pcs_model(**inputs)
+                
+                results = self.pcs_processor.post_process_instance_segmentation(
+                    outputs, threshold=0.5, mask_threshold=0.5,
+                    target_sizes=[pil_image.size[::-1]]
+                )[0]
+                
+                masks_tensor = results["masks"]
+                
+                # Labeling for PCS prompts
+                # The model may return many instances for a single text prompt.
+                # We will label them based on the first text prompt or just 'box'
+                base_label = "box"
+                if texts:
+                    base_label = texts[0]
+
+                all_polygons = []
+                for i, mask_tensor in enumerate(masks_tensor):
+                    polys = mask_to_polygons((mask_tensor.cpu().numpy() > 0.5).astype(np.uint8), epsilon_ratio=epsilon_ratio)
+                    for p in polys:
+                         all_polygons.append({"points": p, "label": f"{base_label}_{i}"})
+                return all_polygons
 
         except Exception as e:
             print(f"Error during SAM3 inference: {e}")
