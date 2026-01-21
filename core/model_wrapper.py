@@ -3,15 +3,6 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
-
-# Imports based on the new, correct documentation from Hugging Face
-from transformers import Sam3Model, Sam3Processor
-
-import os
-import cv2
-import numpy as np
-import torch
-from PIL import Image
 import io
 import base64
 
@@ -96,16 +87,25 @@ class SAM3Annotator:
             else:
                 masks_tensor = results["masks"]
 
-            # Convert final masks to base64 PNGs
+            # Convert final masks to base64 PNGs with smooth edges
             output_masks = []
             for i, mask_tensor in enumerate(masks_tensor):
-                mask_np = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
+                # Create a binary mask (0 or 1)
+                mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
                 
-                # Create a colored RGBA image for the mask
-                colored_mask = np.zeros((mask_np.shape[0], mask_np.shape[1], 4), dtype=np.uint8)
-                # Assign a color (e.g., cyan with transparency)
-                color = np.array([0, 255, 255, 128], dtype=np.uint8) 
-                colored_mask[mask_np == 1] = color
+                # Convert to 0-255 grayscale and apply a Gaussian blur to soften the edges
+                mask_255 = mask_np_binary * 255
+                # A small kernel like (5,5) provides subtle anti-aliasing
+                blurred_mask = cv2.GaussianBlur(mask_255, (5, 5), 0)
+                
+                # Create a colored RGBA image
+                colored_mask = np.zeros((mask_np_binary.shape[0], mask_np_binary.shape[1], 4), dtype=np.uint8)
+                color = np.array([0, 255, 255])  # Cyan color for the mask area
+                
+                # Apply the color to all pixels that will be visible
+                colored_mask[blurred_mask > 0, :3] = color
+                # Use the blurred, smoothed mask as the alpha channel
+                colored_mask[:, :, 3] = blurred_mask
 
                 mask_img = Image.fromarray(colored_mask, 'RGBA')
                 buffer = io.BytesIO()

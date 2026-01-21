@@ -12,8 +12,6 @@ class AnnotationRequest(BaseModel):
     image_path: Optional[str] = None
     boxes: Optional[List[BoxPrompt]] = None
     texts: Optional[List[TextPrompt]] = None
-    # Threshold for polygon simplification
-    epsilon_ratio: float = Field(0.005, description="Ratio for Douglas-Peucker simplification. Smaller = more detail.")
 
 class MaskResult(BaseModel):
     label: str
