@@ -42,12 +42,19 @@ class SAM3Annotator:
             processor_args = {'images': pil_image, 'return_tensors': 'pt'}
             base_label = "prompt"
             
+            # The model does not natively support "find text in box".
+            # The workaround is to find all instances of the text, then filter them
+            # to see which ones are inside the user-provided boxes.
+            
+            # For mixed prompts, we ignore the boxes during the initial API call.
+            is_mixed_prompt = texts and boxes
+            
             if texts:
-                # Use only the first text prompt.
                 processor_args['text'] = texts[0]
                 base_label = texts[0]
             
-            if boxes:
+            if boxes and not is_mixed_prompt:
+                # Only add boxes to the processor if it's a box-only prompt
                 processor_args['input_boxes'] = [boxes] 
                 box_labels = [1] * len(boxes)
                 processor_args['input_boxes_labels'] = [box_labels]
@@ -66,8 +73,30 @@ class SAM3Annotator:
                 target_sizes=[pil_image.size[::-1]]
             )[0]
             
-            masks_tensor = results["masks"]
-            
+            # Post-processing for mixed prompts (text + box)
+            if is_mixed_prompt:
+                print("Filtering results for mixed prompt...")
+                filtered_masks = []
+                result_boxes = results["boxes"]
+                result_masks = results["masks"]
+
+                for i, res_box in enumerate(result_boxes):
+                    # Calculate center of the mask's bounding box
+                    center_x = (res_box[0] + res_box[2]) / 2
+                    center_y = (res_box[1] + res_box[3]) / 2
+
+                    # Check if the center is inside any of the user-provided prompt boxes
+                    for user_box in boxes:
+                        if (center_x >= user_box[0] and center_x <= user_box[2] and
+                            center_y >= user_box[1] and center_y <= user_box[3]):
+                            filtered_masks.append(result_masks[i])
+                            break # Found a match, no need to check other user boxes
+                
+                masks_tensor = torch.stack(filtered_masks) if filtered_masks else torch.empty(0)
+            else:
+                masks_tensor = results["masks"]
+
+            # Convert final masks to polygons
             all_polygons = []
             for i, mask_tensor in enumerate(masks_tensor):
                 polys = mask_to_polygons((mask_tensor.cpu().numpy() > 0.5).astype(np.uint8), epsilon_ratio=epsilon_ratio)
