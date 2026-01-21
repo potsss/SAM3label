@@ -65,16 +65,18 @@ class SAM3Annotator:
             elif points and labels:
                 # --- POINT PROMPT (PVS/Tracker) ---
                 print("Processing with Point Prompt (PVS/Tracker Model)...")
-                # All points are treated as refinement for a single object.
-                input_points = [[points]]
-                input_labels = [[labels]]
+                # Treat each point as a prompt for a new object.
+                # This handles both single and multiple point cases.
+                input_points = [[ [p] for p in points ]]
+                input_labels = [[ [l] for l in labels ]]
 
                 inputs = self.pvs_processor(
                     images=pil_image, input_points=input_points, input_labels=input_labels, return_tensors="pt"
                 ).to(self.device)
                 
                 with torch.no_grad():
-                    outputs = self.pvs_model(**inputs)
+                    # multimask_output=False is recommended to get one mask per object prompt.
+                    outputs = self.pvs_model(**inputs, multimask_output=False)
 
                 # Use the PVS post-processor, defensively checking for reshaped_input_sizes
                 post_process_args = (
