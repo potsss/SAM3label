@@ -69,6 +69,32 @@ async def predict_annotation(request: AnnotationRequest):
 async def health_check():
     return {"status": "healthy", "model_loaded": annotator.model is not None}
 
+@app.post("/predict_video", response_model=VideoAnnotationResponse)
+async def predict_video(request: VideoAnnotationRequest):
+    # 1. Prepare Prompts from the request
+    points = []
+    labels = []
+    if request.points:
+        for p in request.points:
+            points.append(p.point)
+            labels.append(p.label)
+    
+    if not points:
+        raise HTTPException(status_code=400, detail="Initial point prompts are required for video tracking.")
+
+    # 2. Inference
+    try:
+        frame_results = annotator.predict_video(
+            video_base64=request.video_base64,
+            points=points,
+            labels=labels
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Video inference error: {str(e)}")
+
+    # 4. Format Response
+    return VideoAnnotationResponse(frames=frame_results)
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8069)

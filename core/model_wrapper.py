@@ -5,30 +5,40 @@ import torch
 from PIL import Image
 import io
 import base64
+import tempfile
 
-# Imports based on the new, correct documentation from Hugging Face
-from transformers import Sam3Model, Sam3Processor
+# Imports for image and video processing
+from transformers import Sam3Model, Sam3Processor, Sam3TrackerVideoModel, Sam3TrackerVideoProcessor
 
 class SAM3Annotator:
     def __init__(self, model_path: str):
         """
-        Initializes the Concept Segmentation (PCS) model from the 
-        Hugging Face transformers library.
+        Initializes the PCS model for images and the PVS Tracker model for videos.
         """
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Using device: {self.device}")
         
         try:
-            print("Loading SAM3 PCS Model (for text/box prompts) from local path...")
+            # Load Image (PCS) Model
+            print("Loading SAM3 PCS Model (for images) from local path...")
             self.pcs_model = Sam3Model.from_pretrained(model_path).to(self.device)
             self.pcs_processor = Sam3Processor.from_pretrained(model_path)
             print("PCS Model and Processor loaded successfully.")
 
+            # Load Video (PVS Tracker) Model
+            print("Loading SAM3 PVS Tracker Model (for videos) from local path...")
+            self.pvs_tracker_model = Sam3TrackerVideoModel.from_pretrained(model_path).to(self.device, dtype=torch.bfloat16)
+            self.pvs_tracker_processor = Sam3TrackerVideoProcessor.from_pretrained(model_path)
+            print("PVS Tracker Model and Processor loaded successfully.")
+
+
         except Exception as e:
             print(f"An error occurred during model loading: {e}")
             self.pcs_model = None
+            self.pvs_tracker_model = None
 
     def predict(self, image: np.ndarray, boxes=None, texts=None):
+        # ... (existing predict method for images - unchanged) ...
         if not self.pcs_model:
             print("Running in mock mode due to model loading failure.")
             return [{"label": "mock_obj", "mask_base64": ""}]
@@ -36,12 +46,10 @@ class SAM3Annotator:
         pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         
         try:
-            # --- TEXT, BOX, or MIXED PROMPT (PCS Model) ---
             print("Processing with Text/Box/Mixed Prompt (PCS Model)...")
             
             processor_args = {'images': pil_image, 'return_tensors': 'pt'}
             base_label = "prompt"
-            
             is_mixed_prompt = texts and boxes
             
             if texts:
@@ -72,52 +80,134 @@ class SAM3Annotator:
                 filtered_masks = []
                 result_boxes = results["boxes"]
                 result_masks = results["masks"]
-
                 for i, res_box in enumerate(result_boxes):
                     center_x = (res_box[0] + res_box[2]) / 2
                     center_y = (res_box[1] + res_box[3]) / 2
-
                     for user_box in boxes:
                         if (center_x >= user_box[0] and center_x <= user_box[2] and
                             center_y >= user_box[1] and center_y <= user_box[3]):
                             filtered_masks.append(result_masks[i])
                             break
-                
                 masks_tensor = torch.stack(filtered_masks) if filtered_masks else torch.empty(0)
             else:
                 masks_tensor = results["masks"]
 
-            # Convert final masks to base64 PNGs with smooth edges
             output_masks = []
             for i, mask_tensor in enumerate(masks_tensor):
-                # Create a binary mask (0 or 1)
                 mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
-                
-                # Convert to 0-255 grayscale and apply a Gaussian blur to soften the edges
                 mask_255 = mask_np_binary * 255
-                # A small kernel like (5,5) provides subtle anti-aliasing
                 blurred_mask = cv2.GaussianBlur(mask_255, (5, 5), 0)
-                
-                # Create a colored RGBA image
                 colored_mask = np.zeros((mask_np_binary.shape[0], mask_np_binary.shape[1], 4), dtype=np.uint8)
-                color = np.array([0, 255, 255])  # Cyan color for the mask area
-                
-                # Apply the color to all pixels that will be visible
+                color = np.array([0, 255, 255])
                 colored_mask[blurred_mask > 0, :3] = color
-                # Use the blurred, smoothed mask as the alpha channel
                 colored_mask[:, :, 3] = blurred_mask
-
                 mask_img = Image.fromarray(colored_mask, 'RGBA')
                 buffer = io.BytesIO()
                 mask_img.save(buffer, format="PNG")
                 img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
-                
-                output_masks.append({
-                    "label": f"{base_label}_{i}",
-                    "mask_base64": f"data:image/png;base64,{img_str}"
-                })
+                output_masks.append({"label": f"{base_label}_{i}", "mask_base64": f"data:image/png;base64,{img_str}"})
             return output_masks
-
         except Exception as e:
             print(f"Error during SAM3 inference: {e}")
             raise e
+
+    def predict_video(self, video_base64: str, points: list, labels: list):
+        if not self.pvs_tracker_model:
+            raise Exception("Video model not loaded.")
+
+        video_data = base64.b64decode(video_base64)
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmpfile:
+            tmpfile.write(video_data)
+            video_path = tmpfile.name
+
+        try:
+            # 1. Initialize video session in streaming mode (no video frames passed)
+            inference_session = self.pvs_tracker_processor.init_video_session(
+                inference_device=self.device,
+                dtype=torch.bfloat16,
+            )
+
+            # 2. Add point prompts for the first frame
+            obj_ids = list(range(1, len(points) + 1))
+            input_points = [[[p]] for p in points]
+            input_labels = [[l] for l in labels]
+            
+            # 3. Open video and process frame by frame
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                raise Exception("Could not open video file.")
+            
+            video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            
+            video_segments = {}
+            frame_idx = 0
+            
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_frame = Image.fromarray(frame_rgb)
+
+                # Process a single frame to get correct input shapes
+                inputs = self.pvs_tracker_processor(images=pil_frame, return_tensors="pt")
+
+                # On the first frame, add the user's prompts to the session
+                if frame_idx == 0:
+                    self.pvs_tracker_processor.add_inputs_to_inference_session(
+                        inference_session=inference_session,
+                        frame_idx=0,
+                        obj_ids=obj_ids,
+                        input_points=input_points,
+                        input_labels=input_labels,
+                        original_size=inputs.original_sizes[0],
+                    )
+
+                # 4. Propagate model on the current frame
+                with torch.no_grad():
+                    model_outputs = self.pvs_tracker_model(
+                        inference_session=inference_session, 
+                        frame=inputs.pixel_values[0].to(self.device, dtype=torch.bfloat16)
+                    )
+                
+                # 5. Post-process the masks for the current frame
+                video_res_masks = self.pvs_tracker_processor.post_process_masks(
+                    [model_outputs.pred_masks], 
+                    original_sizes=[[video_height, video_width]], 
+                    binarize=False
+                )[0].squeeze(1)
+
+                frame_masks = []
+                for i, mask_tensor in enumerate(video_res_masks):
+                    mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
+                    mask_255 = mask_np_binary * 255
+                    blurred_mask = cv2.GaussianBlur(mask_255, (5, 5), 0)
+                    
+                    colored_mask = np.zeros((mask_np_binary.shape[0], mask_np_binary.shape[1], 4), dtype=np.uint8)
+                    color_val = (i * 50) % 256
+                    color = np.array([color_val, 255 - color_val, (color_val + 128) % 256])
+                    colored_mask[blurred_mask > 0, :3] = color
+                    colored_mask[:, :, 3] = blurred_mask
+
+                    mask_img = Image.fromarray(colored_mask, 'RGBA')
+                    buffer = io.BytesIO()
+                    mask_img.save(buffer, format="PNG")
+                    b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+                    frame_masks.append({
+                        "label": f"object_{obj_ids[i]}",
+                        "mask_base64": f"data:image/png;base64,{b64_str}"
+                    })
+                video_segments[str(frame_idx)] = frame_masks
+                print(f"Processed video frame {frame_idx}")
+                frame_idx += 1
+
+            cap.release()
+            return video_segments
+
+        finally:
+            if os.path.exists(video_path):
+                os.remove(video_path)

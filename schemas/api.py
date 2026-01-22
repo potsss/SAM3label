@@ -20,3 +20,19 @@ class MaskResult(BaseModel):
 class AnnotationResponse(BaseModel):
     masks: List[MaskResult]
     message: str = "Success"
+
+# --- Models for Video Annotation ---
+
+class PointPrompt(BaseModel):
+    point: List[float] = Field(..., description="[x, y] coordinates")
+    label: int = Field(1, description="1 for positive, 0 for negative")
+
+class VideoAnnotationRequest(BaseModel):
+    video_base64: str = Field(..., description="Base64 encoded video file.")
+    points: List[PointPrompt] = Field(..., description="List of initial point prompts on the first frame.")
+
+class VideoAnnotationResponse(BaseModel):
+    # The keys will be frame numbers as strings, e.g., "0", "1", "2"...
+    frames: dict[str, List[MaskResult]]
+    message: str = "Success"
+
