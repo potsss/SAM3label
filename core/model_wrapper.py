@@ -130,7 +130,7 @@ class SAM3Annotator:
 
             # 2. Add point prompts for the first frame
             obj_ids = list(range(1, len(points) + 1))
-            input_points = [[[p] for p in points]]
+            input_points = np.array(points).reshape(1, len(points), 1, 2).tolist()
             input_labels = [[[l] for l in labels]]
             
             # 3. Open video and process frame by frame
@@ -174,11 +174,17 @@ class SAM3Annotator:
                     )
                 
                 # 5. Post-process the masks for the current frame
-                video_res_masks = self.pvs_tracker_processor.post_process_masks(
+                video_res_masks_list = self.pvs_tracker_processor.post_process_masks(
                     [model_outputs.pred_masks], 
                     original_sizes=[[video_height, video_width]], 
                     binarize=False
-                )[0].squeeze(1)
+                )
+                if not video_res_masks_list:
+                    video_segments[str(frame_idx)] = []
+                    frame_idx += 1
+                    continue
+                
+                video_res_masks = video_res_masks_list[0].squeeze(1)
 
                 frame_masks = []
                 for i, mask_tensor in enumerate(video_res_masks):
