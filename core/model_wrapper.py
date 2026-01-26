@@ -130,7 +130,7 @@ class SAM3Annotator:
 
             # 2. Add point prompts for the first frame
             obj_ids = list(range(1, len(points) + 1))
-            input_points = [[[[p] for p in points]]]
+            input_points = [[[p] for p in points]]
             input_labels = [[[l] for l in labels]]
             
             # 3. Open video and process frame by frame
