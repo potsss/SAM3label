@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from schemas.api import AnnotationRequest, AnnotationResponse, MaskResult
+from schemas.api import AnnotationRequest, AnnotationResponse, MaskResult, VideoAnnotationRequest, VideoAnnotationResponse
 from core.model_wrapper import SAM3Annotator
 from utils.image_utils import base64_to_cv2
 import cv2
