@@ -129,7 +129,6 @@ class SAM3Annotator:
 
             # 2. Add box prompts for the first frame
             obj_ids = list(range(1, len(boxes) + 1))
-            print(f"obj_ids length: {len(obj_ids)}")
             input_boxes = np.array(boxes).reshape(1, len(boxes), 4).tolist()
             
             # 3. Open video and process frame by frame
@@ -170,33 +169,26 @@ class SAM3Annotator:
                         inference_session=inference_session,
                         frame=inputs.pixel_values[0].to(self.device),
                         multimask_output=False
-                    )
-                print(f"model_outputs.pred_masks shape: {model_outputs.pred_masks.shape if model_outputs.pred_masks is not None else 'None'}")
-                if model_outputs.pred_masks is not None and model_outputs.pred_masks.numel() > 0:
-                    print(f"model_outputs.pred_masks min: {model_outputs.pred_masks.min().item()}, max: {model_outputs.pred_masks.max().item()}, mean: {model_outputs.pred_masks.mean().item()}")                
+                    )                
                 # 5. Post-process the masks for the current frame
                 video_res_masks_list = self.pvs_tracker_processor.post_process_masks(
                     [model_outputs.pred_masks], 
                     original_sizes=[[video_height, video_width]], 
                     binarize=False
                 )
-                print(f"video_res_masks_list length: {len(video_res_masks_list) if video_res_masks_list is not None else 'None'}")
                 if not video_res_masks_list:
                     video_segments[str(frame_idx)] = []
                     frame_idx += 1
                     continue
                 
                 video_res_masks = video_res_masks_list[0].squeeze(1)
-                print(f"video_res_masks actual num_masks: {video_res_masks.shape[0] if video_res_masks is not None else 'None'}, full shape: {video_res_masks.shape if video_res_masks is not None else 'None'}")
 
                 frame_masks = []
                 for i, obj_id in enumerate(obj_ids):
-                    print(f"Loop: i={i}, len(obj_ids)={len(obj_ids)}, len(video_res_masks)={len(video_res_masks)}")
-                    if i >= len(video_res_masks):
+                    if i >= video_res_masks.shape[0]:
                         break  # Stop if model returned fewer masks than objects
 
                     mask_tensor = video_res_masks[i]
-                    print(f"mask_tensor {i} shape: {mask_tensor.shape if mask_tensor is not None else 'None'}")
 
                     mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
                     mask_255 = mask_np_binary * 255
@@ -217,7 +209,6 @@ class SAM3Annotator:
                         "label": f"object_{obj_id}",
                         "mask_base64": f"data:image/png;base64,{b64_str}"
                     })
-                print(f"Generated {len(frame_masks)} masks for frame {frame_idx}")
                 video_segments[str(frame_idx)] = frame_masks
                 print(f"Processed video frame {frame_idx}")
                 frame_idx += 1
