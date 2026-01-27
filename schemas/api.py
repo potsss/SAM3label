@@ -21,6 +21,15 @@ class AnnotationResponse(BaseModel):
     masks: List[MaskResult]
     message: str = "Success"
 
+# --- Models for Automatic Mode (No Prompts) ---
+
+class AutoAnnotationRequest(BaseModel):
+    image_base64: str = Field(..., description="Base64 encoded image file.")
+
+class AutoAnnotationResponse(BaseModel):
+    masks: List[MaskResult]
+    message: str = "Success"
+
 # --- Models for Video Annotation ---
 
 class PointPrompt(BaseModel):
@@ -35,4 +44,12 @@ class VideoAnnotationResponse(BaseModel):
     # The keys will be frame numbers as strings, and values are the base64 encoded annotated frames
     frames: dict[str, str]
     debug_images: Optional[dict[str, str]] = None  # Keys like "frame_0", "frame_1", values are base64 strings
+
+# --- Models for Video Automatic Mode ---
+
+class VideoAutoAnnotationRequest(BaseModel):
+    video_base64: str = Field(..., description="Base64 encoded video file.")
+
+class VideoAutoAnnotationResponse(BaseModel):
+    frames: dict[str, str] = Field(..., description="Frame indices as keys, base64 annotated frames as values")
 

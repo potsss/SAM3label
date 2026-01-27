@@ -2,7 +2,12 @@ import os
 import traceback
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from schemas.api import AnnotationRequest, AnnotationResponse, MaskResult, VideoAnnotationRequest, VideoAnnotationResponse
+from schemas.api import (
+    AnnotationRequest, AnnotationResponse, MaskResult, 
+    VideoAnnotationRequest, VideoAnnotationResponse,
+    AutoAnnotationRequest, AutoAnnotationResponse,
+    VideoAutoAnnotationRequest, VideoAutoAnnotationResponse
+)
 from core.model_wrapper import SAM3Annotator
 from utils.image_utils import base64_to_cv2
 import cv2
@@ -95,6 +100,52 @@ async def predict_video(request: VideoAnnotationRequest):
 
     # 3. Format Response
     return VideoAnnotationResponse(frames=frame_results)
+
+@app.post("/predict_auto", response_model=AutoAnnotationResponse)
+async def predict_annotation_auto(request: AutoAnnotationRequest):
+    """
+    Automatically segment all objects in an image without any prompts.
+    No manual annotation required - the model detects everything.
+    """
+    # 1. Load Image
+    try:
+        image = base64_to_cv2(request.image_base64)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid base64 image: {str(e)}")
+
+    if image is None:
+        raise HTTPException(status_code=400, detail="Failed to decode image")
+
+    # 2. Inference - Automatic Mode
+    try:
+        mask_results = annotator.predict_auto_image(image)
+    except Exception as e:
+        tb_str = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=f"Image inference error: {str(e)}\n\nTraceback:\n{tb_str}")
+
+    # 3. Format Response
+    return AutoAnnotationResponse(
+        masks=mask_results,
+        message=f"Successfully detected and segmented {len(mask_results)} objects"
+    )
+
+@app.post("/predict_video_auto", response_model=VideoAutoAnnotationResponse)
+async def predict_video_auto(request: VideoAutoAnnotationRequest):
+    """
+    Automatically segment all objects in every frame of a video without any prompts.
+    No manual annotation required - the model detects everything in each frame.
+    """
+    # 1. Inference - Automatic Video Mode
+    try:
+        frame_results = annotator.predict_auto_video(
+            video_base64=request.video_base64
+        )
+    except Exception as e:
+        tb_str = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=f"Video inference error: {str(e)}\n\nTraceback:\n{tb_str}")
+
+    # 2. Format Response
+    return VideoAutoAnnotationResponse(frames=frame_results)
 
 if __name__ == "__main__":
     import uvicorn

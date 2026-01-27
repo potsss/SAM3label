@@ -9,7 +9,7 @@ import tempfile
 import gc
 
 # Imports for image and video processing
-from transformers import Sam3Model, Sam3Processor, Sam3TrackerVideoModel, Sam3TrackerVideoProcessor
+from transformers import Sam3Model, Sam3Processor, Sam3TrackerVideoModel, Sam3TrackerVideoProcessor, pipeline
 
 class SAM3Annotator:
     def __init__(self, model_path: str):
@@ -31,12 +31,17 @@ class SAM3Annotator:
             self.pvs_tracker_model = Sam3TrackerVideoModel.from_pretrained(model_path).to(self.device)
             self.pvs_tracker_processor = Sam3TrackerVideoProcessor.from_pretrained(model_path)
             print("PVS Tracker Model and Processor loaded successfully.")
-
+            
+            # Load Automatic Mask Generation Pipeline
+            print("Loading SAM3 Automatic Mask Generation pipeline...")
+            self.mask_generator = pipeline("mask-generation", model="facebook/sam3", device=0 if self.device == "cuda" else -1)
+            print("Automatic Mask Generation pipeline loaded successfully.")
 
         except Exception as e:
             print(f"An error occurred during model loading: {e}")
             self.pcs_model = None
             self.pvs_tracker_model = None
+            self.mask_generator = None
 
     def predict(self, image: np.ndarray, boxes=None, texts=None):
         # ... (existing predict method for images - unchanged) ...
@@ -281,6 +286,197 @@ class SAM3Annotator:
             if os.path.exists(video_path):
                 print(f"[OPTIMIZE] Deleting temporary video file: {video_path}")
                 os.remove(video_path)
+            
+            # Ensure cleanup on error
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+            gc.collect()
+    
+    def predict_auto_image(self, image: np.ndarray):
+        """
+        Automatically generate masks for all objects in an image without any prompts.
+        Uses SAM3's automatic mask generation feature.
+        
+        Args:
+            image: Input image as numpy array (BGR format)
+            
+        Returns:
+            List of dictionaries with mask_base64 for each detected object
+        """
+        if not self.mask_generator:
+            raise Exception("Automatic mask generator not loaded.")
+        
+        print("\n[AUTO] Starting automatic mask generation for image...")
+        
+        pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        
+        try:
+            # Use the automatic mask generation pipeline
+            # points_per_batch controls the density of exploration points
+            outputs = self.mask_generator(pil_image, points_per_batch=64)
+            
+            print(f"[AUTO] Detected {len(outputs['masks'])} masks")
+            
+            output_masks = []
+            
+            for i, mask in enumerate(outputs['masks']):
+                # Convert mask to numpy array if needed
+                if hasattr(mask, 'numpy'):
+                    mask_np = mask.numpy()
+                else:
+                    mask_np = np.array(mask)
+                
+                # Ensure binary mask
+                mask_binary = (mask_np > 0.5).astype(np.uint8) * 255
+                
+                # Create RGBA mask image
+                colored_mask = np.zeros((mask_binary.shape[0], mask_binary.shape[1], 4), dtype=np.uint8)
+                color = np.array([0, 255, 255])  # Yellow for auto-detected objects
+                colored_mask[mask_binary > 0, :3] = color
+                colored_mask[:, :, 3] = mask_binary
+                
+                mask_img = Image.fromarray(colored_mask, 'RGBA')
+                buffer = io.BytesIO()
+                mask_img.save(buffer, format="PNG")
+                img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                
+                output_masks.append({
+                    "label": f"object_{i}",
+                    "mask_base64": f"data:image/png;base64,{img_str}"
+                })
+            
+            print(f"[AUTO] Successfully generated {len(output_masks)} masks")
+            return output_masks
+            
+        except Exception as e:
+            print(f"Error during automatic mask generation: {e}")
+            raise e
+    
+    def predict_auto_video(self, video_base64: str):
+        """
+        Automatically generate and segment masks for all frames in a video.
+        Uses SAM3's automatic mask generation feature on each frame.
+        
+        Args:
+            video_base64: Base64 encoded video file
+            
+        Returns:
+            Dictionary with frame indices as keys and base64 annotated frames as values
+        """
+        if not self.mask_generator:
+            raise Exception("Automatic mask generator not loaded.")
+        
+        print("\n[AUTO] Starting automatic video segmentation...")
+        video_data = base64.b64decode(video_base64)
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmpfile:
+            tmpfile.write(video_data)
+            video_path = tmpfile.name
+
+        try:
+            cap = cv2.VideoCapture(video_path)
+            if not cap.isOpened():
+                raise Exception("Could not open video file.")
+            
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            
+            print(f"[AUTO] Video info: {video_width}x{video_height}, Total frames: {total_frames}")
+            
+            annotated_frames = {}
+            frame_idx = 0
+            MEMORY_CLEAR_INTERVAL = 5  # Clear GPU memory every N frames
+            
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    print("[AUTO] End of video stream.")
+                    break
+                
+                print(f"--- Processing frame {frame_idx}/{total_frames-1} ---")
+                
+                pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                
+                # Generate masks automatically
+                outputs = self.mask_generator(pil_frame, points_per_batch=64)
+                masks = outputs['masks']
+                
+                print(f"[AUTO] Found {len(masks)} objects in frame {frame_idx}")
+                
+                # Create annotated frame
+                frame_cv = cv2.cvtColor(np.array(pil_frame), cv2.COLOR_RGB2BGR)
+                
+                # Define colors for each detected object
+                n_masks = len(masks)
+                colors_bgr = [
+                    ((i * 60) % 256, (255 - (i * 60) % 256), ((i * 60 + 128) % 256))
+                    for i in range(n_masks)
+                ]
+                
+                # Apply masks with color blending
+                for i, mask in enumerate(masks):
+                    if hasattr(mask, 'numpy'):
+                        mask_np = mask.numpy()
+                    else:
+                        mask_np = np.array(mask)
+                    
+                    mask_binary = (mask_np > 0.5).astype(np.uint8) * 255
+                    color_bgr = colors_bgr[i]
+                    
+                    # Create colored overlay
+                    colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
+                    colored_overlay[:, :] = color_bgr
+                    
+                    # Blend
+                    alpha = mask_binary.astype(float) / 255.0 * 0.6
+                    
+                    for c in range(3):
+                        frame_cv[:, :, c] = (
+                            frame_cv[:, :, c] * (1 - alpha) + 
+                            colored_overlay[:, :, c] * alpha
+                        ).astype(np.uint8)
+                
+                # Encode frame to base64
+                frame_cv_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
+                final_frame_pil = Image.fromarray(frame_cv_rgb, 'RGB')
+                
+                buffer = io.BytesIO()
+                final_frame_pil.convert("RGB").save(buffer, format="JPEG", quality=90)
+                b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                
+                annotated_frames[str(frame_idx)] = f"data:image/jpeg;base64,{b64_str}"
+                
+                # Periodic memory cleanup
+                if frame_idx > 0 and frame_idx % MEMORY_CLEAR_INTERVAL == 0:
+                    print(f"[AUTO] Clearing GPU memory at frame {frame_idx}...")
+                    
+                    if self.device == "cuda":
+                        torch.cuda.empty_cache()
+                    
+                    gc.collect()
+                
+                frame_idx += 1
+
+            cap.release()
+            print(f"\n[AUTO] Finished processing. Total frames returned: {len(annotated_frames)}")
+            
+            # Final cleanup
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+            gc.collect()
+            
+            return annotated_frames
+
+        finally:
+            if os.path.exists(video_path):
+                print(f"[AUTO] Deleting temporary video file: {video_path}")
+                os.remove(video_path)
+            
+            # Ensure cleanup on error
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+            gc.collect()
             
             # Ensure cleanup on error
             if self.device == "cuda":
