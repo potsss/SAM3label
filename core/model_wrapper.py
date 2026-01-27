@@ -124,12 +124,12 @@ class SAM3Annotator:
         try:
             # 1. Initialize video session in streaming mode (no video frames passed)
             inference_session = self.pvs_tracker_processor.init_video_session(
-                inference_device=self.device
+                inference_device=self.device,
+                dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
             )
 
             # 2. Add box prompts for the first frame
             obj_ids = list(range(1, len(boxes) + 1))
-            print(f"obj_ids content: {obj_ids}")
             input_boxes = np.array(boxes).reshape(1, len(boxes), 4).tolist()
             
             # 3. Open video and process frame by frame
@@ -192,7 +192,6 @@ class SAM3Annotator:
                     mask_tensor = video_res_masks[i]
 
                     mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
-                    print(f"mask_np_binary sum for obj {obj_id}: {np.sum(mask_np_binary)}")
                     mask_255 = mask_np_binary * 255
                     blurred_mask = cv2.GaussianBlur(mask_255, (5, 5), 0)
                     
@@ -207,15 +206,11 @@ class SAM3Annotator:
                     mask_img.save(buffer, format="PNG")
                     b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-                    if frame_idx == 0:
-                        print(f"Frame 0, Object {obj_id}: b64_str length = {len(b64_str)}, prefix = {b64_str[:50]}...")
-
                     frame_masks.append({
                         "label": f"object_{obj_id}",
                         "mask_base64": f"data:image/png;base64,{b64_str}"
                     })
                 video_segments[str(frame_idx)] = frame_masks
-                print(f"Processed video frame {frame_idx}")
                 frame_idx += 1
 
             cap.release()
