@@ -461,8 +461,17 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function processImageResponse(data) {
+        console.log('[processImageResponse] Received data:', data);
         state.imgState.resultMasks = data.masks || [];
+        console.log('[processImageResponse] Masks count:', state.imgState.resultMasks.length);
+        
+        if (state.imgState.resultMasks.length === 0) {
+            alert('No masks detected. Please try a different prompt or image.');
+            return;
+        }
+        
         await loadMaskImages(state.imgState.resultMasks);
+        console.log('[processImageResponse] All masks loaded, redrawing canvas');
         redrawImageCanvas();
     }
 
@@ -493,19 +502,34 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function loadMaskImages(maskList) {
-        const promises = maskList.map(maskObj => {
+        const promises = maskList.map((maskObj, index) => {
             return new Promise((resolve) => {
-                if (maskObj.img) return resolve();
+                // Skip if already loaded
+                if (maskObj.img) {
+                    console.log(`[loadMaskImages] Mask ${index} already loaded`);
+                    return resolve();
+                }
+                
+                // Create Image object from base64
                 const maskImage = new Image();
-                maskImage.src = maskObj.mask_base64;
                 maskImage.onload = () => {
                     maskObj.img = maskImage;
+                    console.log(`[loadMaskImages] ✓ Loaded mask ${index}: ${maskObj.label}`);
                     resolve();
                 };
-                maskImage.onerror = () => resolve();
+                maskImage.onerror = (err) => {
+                    console.error(`[loadMaskImages] ✗ Failed to load mask ${index}:`, err);
+                    resolve(); // Continue even if one mask fails
+                };
+                
+                // Set the base64 data URL
+                maskImage.src = maskObj.mask_base64;
+                console.log(`[loadMaskImages] Loading mask ${index}: ${maskObj.label}`);
             });
         });
-        return Promise.all(promises);
+        return Promise.all(promises).then(() => {
+            console.log(`[loadMaskImages] All ${maskList.length} masks loaded successfully`);
+        });
     }
     
     function loadAnnotatedFrames(frameData) {

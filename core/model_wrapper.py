@@ -32,10 +32,16 @@ class SAM3Annotator:
             self.pvs_tracker_processor = Sam3TrackerVideoProcessor.from_pretrained(model_path)
             print("PVS Tracker Model and Processor loaded successfully.")
             
-            # Load Automatic Mask Generation Pipeline
+            # Load Automatic Mask Generation - Try local path first, then fallback
             print("Loading SAM3 Automatic Mask Generation pipeline...")
-            self.mask_generator = pipeline("mask-generation", model="facebook/sam3", device=0 if self.device == "cuda" else -1)
-            print("Automatic Mask Generation pipeline loaded successfully.")
+            try:
+                # Try to load from local path
+                self.mask_generator = pipeline("mask-generation", model=model_path, device=0 if self.device == "cuda" else -1)
+                print("Automatic Mask Generation pipeline loaded from local path successfully.")
+            except Exception as e:
+                print(f"Warning: Could not load automatic mask generation pipeline from local path: {e}")
+                print("Automatic mask generation will be disabled. Manual annotation modes will still work.")
+                self.mask_generator = None
 
         except Exception as e:
             print(f"An error occurred during model loading: {e}")
@@ -304,7 +310,12 @@ class SAM3Annotator:
             List of dictionaries with mask_base64 for each detected object
         """
         if not self.mask_generator:
-            raise Exception("Automatic mask generator not loaded.")
+            raise Exception(
+                "Automatic mask generator not available. "
+                "This feature requires internet connection to download the pipeline from HuggingFace, "
+                "or a locally cached model. "
+                "Please use manual annotation mode (text or box prompts) instead."
+            )
         
         print("\n[AUTO] Starting automatic mask generation for image...")
         
@@ -364,7 +375,12 @@ class SAM3Annotator:
             Dictionary with frame indices as keys and base64 annotated frames as values
         """
         if not self.mask_generator:
-            raise Exception("Automatic mask generator not loaded.")
+            raise Exception(
+                "Automatic mask generator not available. "
+                "This feature requires internet connection to download the pipeline from HuggingFace, "
+                "or a locally cached model. "
+                "Please use manual annotation mode (text or box prompts) instead."
+            )
         
         print("\n[AUTO] Starting automatic video segmentation...")
         video_data = base64.b64decode(video_base64)
