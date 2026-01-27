@@ -7,6 +7,7 @@ from core.model_wrapper import SAM3Annotator
 from utils.image_utils import base64_to_cv2
 import cv2
 import json
+import base64
 
 app = FastAPI(title="SAM3 Annotation Service")
 
@@ -107,7 +108,11 @@ async def predict_video(request: VideoAnnotationRequest):
     # --- END DEBUG ---
 
     # 4. Format Response
-    return VideoAnnotationResponse(frames=frame_results)
+    # Prepend data URI header to each base64 string
+    prefixed_frame_results = {}
+    for frame_idx, b64_string in frame_results.items():
+        prefixed_frame_results[frame_idx] = f"data:image/jpeg;base64,{b64_string}"
+    return VideoAnnotationResponse(frames=prefixed_frame_results)
 
 if __name__ == "__main__":
     import uvicorn
