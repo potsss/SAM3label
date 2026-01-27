@@ -177,12 +177,14 @@ class SAM3Annotator:
                     original_sizes=[[video_height, video_width]], 
                     binarize=False
                 )
+                print(f"video_res_masks_list length: {len(video_res_masks_list) if video_res_masks_list is not None else 'None'}")
                 if not video_res_masks_list:
                     video_segments[str(frame_idx)] = []
                     frame_idx += 1
                     continue
                 
                 video_res_masks = video_res_masks_list[0].squeeze(1)
+                print(f"video_res_masks shape: {video_res_masks.shape if video_res_masks is not None else 'None'}")
 
                 frame_masks = []
                 for i, obj_id in enumerate(obj_ids):
@@ -190,6 +192,7 @@ class SAM3Annotator:
                         break  # Stop if model returned fewer masks than objects
 
                     mask_tensor = video_res_masks[i]
+                    print(f"mask_tensor {i} shape: {mask_tensor.shape if mask_tensor is not None else 'None'}")
 
                     mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
                     mask_255 = mask_np_binary * 255
@@ -210,6 +213,7 @@ class SAM3Annotator:
                         "label": f"object_{obj_id}",
                         "mask_base64": f"data:image/png;base64,{b64_str}"
                     })
+                print(f"Generated {len(frame_masks)} masks for frame {frame_idx}")
                 video_segments[str(frame_idx)] = frame_masks
                 print(f"Processed video frame {frame_idx}")
                 frame_idx += 1
