@@ -6,6 +6,7 @@ from PIL import Image
 import io
 import base64
 import tempfile
+import gc
 
 # Imports for image and video processing
 from transformers import Sam3Model, Sam3Processor, Sam3TrackerVideoModel, Sam3TrackerVideoProcessor
@@ -112,10 +113,18 @@ class SAM3Annotator:
             raise e
 
     def predict_video(self, video_base64: str, boxes: list):
+        """
+        Process video with streaming approach to avoid CUDA memory overflow for long videos.
+        Key optimizations:
+        1. Stream-based processing - don't load all frames at once
+        2. Explicit garbage collection after each frame
+        3. GPU cache clearing to prevent memory accumulation
+        4. Process and store only essential data
+        """
         if not self.pvs_tracker_model:
             raise Exception("Video model not loaded.")
 
-        print("\n[DEBUG] Starting video prediction...")
+        print("\n[OPTIMIZE] Starting optimized video prediction with memory management...")
         video_data = base64.b64decode(video_base64)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmpfile:
@@ -123,7 +132,7 @@ class SAM3Annotator:
             video_path = tmpfile.name
 
         try:
-            print("[DEBUG] Initializing PVS tracker video session.")
+            print("[OPTIMIZE] Initializing PVS tracker video session.")
             inference_session = self.pvs_tracker_processor.init_video_session(
                 inference_device=self.device,
                 dtype=torch.bfloat16 if self.device == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
@@ -137,7 +146,7 @@ class SAM3Annotator:
                 raise Exception("Could not open video file.")
             
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            print(f"[DEBUG] Video opened successfully. Total frames: {total_frames}")
+            print(f"[OPTIMIZE] Video opened. Total frames: {total_frames}")
 
             video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -145,19 +154,22 @@ class SAM3Annotator:
             annotated_frames = {}
             frame_idx = 0
             
+            # Key optimization: Track memory and clear periodically
+            MEMORY_CLEAR_INTERVAL = 10  # Clear GPU memory every N frames
+            
             while True:
                 ret, frame = cap.read()
                 if not ret:
-                    print("[DEBUG] End of video stream.")
+                    print("[OPTIMIZE] End of video stream.")
                     break
                 
-                print(f"\n--- Processing frame {frame_idx}/{total_frames-1} ---")
+                print(f"--- Processing frame {frame_idx}/{total_frames-1} ---")
 
                 pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 inputs = self.pvs_tracker_processor(images=pil_frame, return_tensors="pt")
 
                 if frame_idx == 0:
-                    print("[DEBUG] Adding initial box prompts to the session for frame 0.")
+                    print("[OPTIMIZE] Adding initial box prompts for frame 0.")
                     self.pvs_tracker_processor.add_inputs_to_inference_session(
                         inference_session=inference_session,
                         frame_idx=0,
@@ -166,6 +178,7 @@ class SAM3Annotator:
                         original_size=inputs.original_sizes[0],
                     )
 
+                # Process frame with GPU
                 with torch.no_grad():
                     model_outputs = self.pvs_tracker_model(
                         inference_session=inference_session,
@@ -179,90 +192,97 @@ class SAM3Annotator:
                     binarize=False
                 )
 
-                # Don't convert to RGBA here, we'll handle it with OpenCV
-                pil_frame_rgb = pil_frame  # Keep as RGB for now
-
+                # Process and encode frame
                 if video_res_masks_list:
                     video_res_masks = video_res_masks_list[0].squeeze(1)
-                    print(f"[DEBUG] Found {video_res_masks.shape[0]} masks for frame {frame_idx}.")
+                    print(f"[OPTIMIZE] Found {video_res_masks.shape[0]} masks for frame {frame_idx}.")
                     
-                    # Get raw mask values (0-1 range) before converting
+                    # Get raw mask values and apply threshold
                     masks_raw = video_res_masks.cpu().numpy()
-                    print(f"[DEBUG] Raw mask stats - Min: {masks_raw.min():.4f}, Max: {masks_raw.max():.4f}, Mean: {masks_raw.mean():.4f}")
-                    
-                    # Apply threshold to binarize masks (0.5 threshold as per official examples)
                     masks_binary = (masks_raw > 0.5).astype(np.uint8) * 255
-                    print(f"[DEBUG] After threshold (0.5) - Min: {masks_binary.min()}, Max: {masks_binary.max()}, Sum: {masks_binary.sum()}")
                     
-                    # Create a copy of the frame to work with (in BGR for OpenCV operations)
-                    frame_cv = cv2.cvtColor(np.array(pil_frame_rgb), cv2.COLOR_RGB2BGR)
-                    print(f"[DEBUG] Frame shape: {frame_cv.shape}, dtype: {frame_cv.dtype}")
-                    
-                    # Use inference_session.obj_ids for tracking
+                    # Create annotated frame
+                    frame_cv = cv2.cvtColor(np.array(pil_frame), cv2.COLOR_RGB2BGR)
                     tracking_obj_ids = inference_session.obj_ids
-                    print(f"[DEBUG] tracking_obj_ids from inference_session: {tracking_obj_ids}, length: {len(tracking_obj_ids)}")
                     
-                    # Define colors for each object (BGR format for OpenCV)
+                    # Define colors for each object
                     n_masks = masks_binary.shape[0]
                     colors_bgr = [
                         ((i * 60) % 256, (255 - (i * 60) % 256), ((i * 60 + 128) % 256))
                         for i in range(n_masks)
                     ]
-                    print(f"[DEBUG] Number of masks: {n_masks}, colors: {colors_bgr}")
 
-                    composited_count = 0
+                    # Apply masks with color blending
                     for i, obj_id in enumerate(tracking_obj_ids):
-                        print(f"[DEBUG] Loop iteration {i}, obj_id: {obj_id}")
                         if i >= masks_binary.shape[0]:
-                            print(f"[DEBUG] Warning: Model returned fewer masks than tracked objects. Stopping at mask {i}.")
                             break
-
+                        
                         mask_np = masks_binary[i]
                         color_bgr = colors_bgr[i]
-                        
-                        # Count non-zero pixels in mask
-                        mask_area = np.count_nonzero(mask_np)
-                        print(f"[DEBUG] Processing mask {i}: color={color_bgr}, mask_area={mask_area} pixels, min={mask_np.min()}, max={mask_np.max()}")
-                        
-                        # Create a colored overlay for this mask
                         colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
                         colored_overlay[:, :] = color_bgr
                         
-                        # Use binary mask as alpha: 0 = fully original, 255 = fully color
-                        alpha = mask_np.astype(float) / 255.0 * 0.6  # 60% transparency for color
-                        print(f"[DEBUG] Alpha range - min: {alpha.min():.3f}, max: {alpha.max():.3f}, mean: {alpha.mean():.3f}")
+                        alpha = mask_np.astype(float) / 255.0 * 0.6
                         
-                        # Blend each channel only where mask is non-zero
-                        for c in range(3):  # For each channel (BGR)
+                        for c in range(3):
                             frame_cv[:, :, c] = (
                                 frame_cv[:, :, c] * (1 - alpha) + 
                                 colored_overlay[:, :, c] * alpha
                             ).astype(np.uint8)
-                        
-                        composited_count += 1
-                        print(f"[DEBUG] ✓ Successfully blended mask {i} with area {mask_area}")
                     
-                    # Convert back to RGB for PIL
                     frame_cv_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
                     final_frame_pil = Image.fromarray(frame_cv_rgb, 'RGB')
-                    
-                    print(f"[DEBUG] ✓ Successfully composited {composited_count} masks onto frame {frame_idx}.")
                 else:
-                    print(f"[DEBUG] No masks found for frame {frame_idx}. Frame will be unannotated.")
+                    # No masks found, use original frame
+                    final_frame_pil = pil_frame
 
+                # Encode frame to base64
                 buffer = io.BytesIO()
-                final_frame_pil.convert("RGB").save(buffer, format="JPEG")
+                final_frame_pil.convert("RGB").save(buffer, format="JPEG", quality=90)
                 b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
                 
-                print(f"[DEBUG] Encoded frame {frame_idx} to base64 string (length: {len(b64_str)}).")
+                print(f"[OPTIMIZE] Encoded frame {frame_idx} to base64 (size: {len(b64_str)} bytes).")
                 annotated_frames[str(frame_idx)] = f"data:image/jpeg;base64,{b64_str}"
+                
+                # Key optimization: Periodic memory cleanup
+                if frame_idx > 0 and frame_idx % MEMORY_CLEAR_INTERVAL == 0:
+                    print(f"[OPTIMIZE] Clearing GPU memory at frame {frame_idx}...")
+                    
+                    # Clear PyTorch GPU cache
+                    if self.device == "cuda":
+                        torch.cuda.empty_cache()
+                    
+                    # Explicit garbage collection
+                    gc.collect()
+                    
+                    if self.device == "cuda":
+                        print(f"[OPTIMIZE] GPU memory after cleanup: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+                
+                # Clear intermediate tensors
+                del model_outputs, inputs, video_res_masks_list
+                if 'masks_raw' in locals():
+                    del masks_raw
+                if 'masks_binary' in locals():
+                    del masks_binary
+                
                 frame_idx += 1
 
             cap.release()
-            print(f"\n[DEBUG] Finished processing. Returning {len(annotated_frames)} annotated frames.")
+            print(f"\n[OPTIMIZE] Finished processing. Total frames returned: {len(annotated_frames)}")
+            
+            # Final cleanup
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+            gc.collect()
+            
             return annotated_frames
 
         finally:
             if os.path.exists(video_path):
-                print(f"[DEBUG] Deleting temporary video file: {video_path}")
+                print(f"[OPTIMIZE] Deleting temporary video file: {video_path}")
                 os.remove(video_path)
+            
+            # Ensure cleanup on error
+            if self.device == "cuda":
+                torch.cuda.empty_cache()
+            gc.collect()
