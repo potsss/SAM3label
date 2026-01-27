@@ -115,6 +115,7 @@ class SAM3Annotator:
         if not self.pvs_tracker_model:
             raise Exception("Video model not loaded.")
 
+        print("\n[DEBUG] Starting video prediction...")
         video_data = base64.b64decode(video_base64)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmpfile:
@@ -122,6 +123,7 @@ class SAM3Annotator:
             video_path = tmpfile.name
 
         try:
+            print("[DEBUG] Initializing PVS tracker video session.")
             inference_session = self.pvs_tracker_processor.init_video_session(
                 inference_device=self.device,
                 dtype=torch.bfloat16 if self.device == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
@@ -134,6 +136,9 @@ class SAM3Annotator:
             if not cap.isOpened():
                 raise Exception("Could not open video file.")
             
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            print(f"[DEBUG] Video opened successfully. Total frames: {total_frames}")
+
             video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             
@@ -143,12 +148,16 @@ class SAM3Annotator:
             while True:
                 ret, frame = cap.read()
                 if not ret:
+                    print("[DEBUG] End of video stream.")
                     break
+                
+                print(f"\n--- Processing frame {frame_idx}/{total_frames-1} ---")
 
                 pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 inputs = self.pvs_tracker_processor(images=pil_frame, return_tensors="pt")
 
                 if frame_idx == 0:
+                    print("[DEBUG] Adding initial box prompts to the session for frame 0.")
                     self.pvs_tracker_processor.add_inputs_to_inference_session(
                         inference_session=inference_session,
                         frame_idx=0,
@@ -170,45 +179,46 @@ class SAM3Annotator:
                     binarize=False
                 )
 
-                # Start with the original frame (as a PIL image)
                 final_frame_pil = pil_frame.convert("RGBA")
 
                 if video_res_masks_list:
                     video_res_masks = video_res_masks_list[0].squeeze(1)
+                    print(f"[DEBUG] Found {video_res_masks.shape[0]} masks for frame {frame_idx}.")
                     
-                    # Create a single overlay for all masks in this frame
                     combined_overlay = Image.new("RGBA", final_frame_pil.size, (0, 0, 0, 0))
 
                     for i, obj_id in enumerate(obj_ids):
                         if i >= video_res_masks.shape[0]:
+                            print(f"[DEBUG] Warning: Model returned fewer masks than tracked objects. Stopping at mask {i}.")
                             break
 
                         mask_tensor = video_res_masks[i]
                         mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
                         
-                        # Create a colored RGBA mask for this object
-                        colored_mask_img = Image.new("RGBA", final_frame_pil.size)
                         color_val = (i * 60) % 256
-                        color = (color_val, 255 - color_val, (color_val + 128) % 256, 150) # RGBA with alpha
+                        color = (color_val, 255 - color_val, (color_val + 128) % 256, 150)
                         
-                        # Create a drawable version of the mask
                         mask_for_drawing = Image.fromarray(mask_np_binary * 255, 'L')
                         combined_overlay.paste(color, (0,0), mask_for_drawing)
 
-                    # Composite the combined mask overlay onto the frame
                     final_frame_pil = Image.alpha_composite(final_frame_pil, combined_overlay)
+                    print(f"[DEBUG] Successfully composited masks onto frame {frame_idx}.")
+                else:
+                    print(f"[DEBUG] No masks found for frame {frame_idx}. Frame will be unannotated.")
 
-                # Encode the final annotated frame to Base64
                 buffer = io.BytesIO()
                 final_frame_pil.convert("RGB").save(buffer, format="JPEG")
                 b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
-
+                
+                print(f"[DEBUG] Encoded frame {frame_idx} to base64 string (length: {len(b64_str)}).")
                 annotated_frames[str(frame_idx)] = f"data:image/jpeg;base64,{b64_str}"
                 frame_idx += 1
 
             cap.release()
+            print(f"\n[DEBUG] Finished processing. Returning {len(annotated_frames)} annotated frames.")
             return annotated_frames
 
         finally:
             if os.path.exists(video_path):
+                print(f"[DEBUG] Deleting temporary video file: {video_path}")
                 os.remove(video_path)
