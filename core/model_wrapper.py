@@ -192,7 +192,10 @@ class SAM3Annotator:
                     # DEBUG: Check mask values
                     print(f"[DEBUG] Mask stats - Min: {masks_np.min()}, Max: {masks_np.max()}, Mean: {masks_np.mean():.2f}")
                     print(f"[DEBUG] Mask shape: {masks_np.shape}")
-                    print(f"[DEBUG] obj_ids: {obj_ids}, obj_ids length: {len(obj_ids)}")
+                    
+                    # USE inference_session.obj_ids instead of local obj_ids!
+                    tracking_obj_ids = inference_session.obj_ids
+                    print(f"[DEBUG] tracking_obj_ids from inference_session: {tracking_obj_ids}, length: {len(tracking_obj_ids)}")
                     
                     # Create a copy of the frame to work with (in BGR for OpenCV operations)
                     frame_cv = cv2.cvtColor(np.array(pil_frame_rgb), cv2.COLOR_RGB2BGR)
@@ -207,7 +210,7 @@ class SAM3Annotator:
                     print(f"[DEBUG] Number of masks: {n_masks}, colors: {colors_bgr}")
 
                     composited_count = 0
-                    for i, obj_id in enumerate(obj_ids):
+                    for i, obj_id in enumerate(tracking_obj_ids):
                         print(f"[DEBUG] Loop iteration {i}, obj_id: {obj_id}")
                         if i >= masks_np.shape[0]:
                             print(f"[DEBUG] Warning: Model returned fewer masks than tracked objects. Stopping at mask {i}.")
