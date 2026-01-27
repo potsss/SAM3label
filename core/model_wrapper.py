@@ -130,7 +130,6 @@ class SAM3Annotator:
             # 2. Add box prompts for the first frame
             obj_ids = list(range(1, len(boxes) + 1))
             input_boxes = [boxes]
-            input_boxes_labels = [[1] * len(boxes)]
             
             # 3. Open video and process frame by frame
             cap = cv2.VideoCapture(video_path)
@@ -161,7 +160,6 @@ class SAM3Annotator:
                         frame_idx=0,
                         obj_ids=obj_ids,
                         input_boxes=input_boxes,
-                        input_boxes_labels=input_boxes_labels,
                         original_size=inputs.original_sizes[0],
                     )
 
