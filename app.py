@@ -1,4 +1,6 @@
 import os
+import traceback
+import traceback
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from schemas.api import AnnotationRequest, AnnotationResponse, MaskResult, VideoAnnotationRequest, VideoAnnotationResponse
@@ -90,7 +92,8 @@ async def predict_video(request: VideoAnnotationRequest):
             labels=labels
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Video inference error: {str(e)}")
+        tb_str = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=f"Video inference error: {str(e)}\n\nTraceback:\n{tb_str}")
 
     # 4. Format Response
     return VideoAnnotationResponse(frames=frame_results)
