@@ -6,6 +6,7 @@ from schemas.api import AnnotationRequest, AnnotationResponse, MaskResult, Video
 from core.model_wrapper import SAM3Annotator
 from utils.image_utils import base64_to_cv2
 import cv2
+import json
 
 app = FastAPI(title="SAM3 Annotation Service")
 
