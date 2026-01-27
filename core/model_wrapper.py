@@ -129,6 +129,7 @@ class SAM3Annotator:
 
             # 2. Add box prompts for the first frame
             obj_ids = list(range(1, len(boxes) + 1))
+            print(f"obj_ids content: {obj_ids}")
             input_boxes = np.array(boxes).reshape(1, len(boxes), 4).tolist()
             
             # 3. Open video and process frame by frame
