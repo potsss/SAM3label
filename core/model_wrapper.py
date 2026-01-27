@@ -187,7 +187,12 @@ class SAM3Annotator:
                 video_res_masks = video_res_masks_list[0].squeeze(1)
 
                 frame_masks = []
-                for i, mask_tensor in enumerate(video_res_masks):
+                for i, obj_id in enumerate(obj_ids):
+                    if i >= len(video_res_masks):
+                        break  # Stop if model returned fewer masks than objects
+
+                    mask_tensor = video_res_masks[i]
+
                     mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
                     mask_255 = mask_np_binary * 255
                     blurred_mask = cv2.GaussianBlur(mask_255, (5, 5), 0)
@@ -204,7 +209,7 @@ class SAM3Annotator:
                     b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
                     frame_masks.append({
-                        "label": f"object_{obj_ids[i]}",
+                        "label": f"object_{obj_id}",
                         "mask_base64": f"data:image/png;base64,{b64_str}"
                     })
                 video_segments[str(frame_idx)] = frame_masks
