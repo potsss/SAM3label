@@ -93,31 +93,8 @@ async def predict_video(request: VideoAnnotationRequest):
         tb_str = traceback.format_exc()
         raise HTTPException(status_code=500, detail=f"Video inference error: {str(e)}\n\nTraceback:\n{tb_str}")
 
-    debug_images = {}
-    
-    # --- DEBUG: Save and return frame 0 and frame 1 ---
-    for frame_num in ["0", "1"]:
-        if frame_num in frame_results:
-            try:
-                print(f"[DEBUG] Processing frame {frame_num}")
-                # The string is "data:image/jpeg;base64,..." - extract the raw b64 string
-                if "," in frame_results[frame_num]:
-                    header, raw_b64_str = frame_results[frame_num].split(",", 1)
-                else:
-                    raw_b64_str = frame_results[frame_num]
-                
-                img_data = base64.b64decode(raw_b64_str)
-                filename = f"debug_frame_{frame_num}.jpg"
-                with open(filename, "wb") as f:
-                    f.write(img_data)
-                print(f"[DEBUG] Successfully saved {filename}")
-                debug_images[f"frame_{frame_num}"] = f"data:image/jpeg;base64,{raw_b64_str}"
-            except Exception as e:
-                print(f"[DEBUG] FAILED to process frame {frame_num}: {e}")
-    # --- END DEBUG ---
-
-    # 4. Format Response
-    return VideoAnnotationResponse(frames=frame_results, debug_images=debug_images if debug_images else None)
+    # 3. Format Response
+    return VideoAnnotationResponse(frames=frame_results)
 
 if __name__ == "__main__":
     import uvicorn

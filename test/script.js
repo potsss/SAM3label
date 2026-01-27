@@ -60,22 +60,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     clearBtn.addEventListener('click', () => {
-        state = {
-            ...state,
-            image: null,
-            imgState: { modes: new Set(), boxes: [], isDrawing: false, startPoint: null, currentBox: null, resultMasks: [] },
-            videoURL: null,
-            videoBase64: null,
-            videoBoxes: [],
-            annotatedFrames: {},
-            videoTotalFrames: 0,
-        };
-        textPromptInput.value = '';
-        imageLoader.value = '';
-        videoLoader.value = '';
-        videoResultsContainer.style.display = 'none';
-        videoPlayer.src = '';
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        // 只清除标注结果，保留已加载的图片/视频
+        if (state.globalMode === 'image') {
+            // 图像模式：清除标注结果但保留加载的图片
+            state.imgState = {
+                modes: new Set(),
+                boxes: [],
+                isDrawing: false,
+                startPoint: null,
+                currentBox: null,
+                resultMasks: []  // 清除标注结果
+            };
+            textPromptInput.value = '';
+            
+            // 重新绘制原始图片（无标注）
+            if (state.image) {
+                redrawImageCanvas();
+                console.log('[Clear] Image annotations cleared, original image displayed');
+            }
+        } else {
+            // 视频模式：清除标注结果但保留加载的视频
+            state.videoBoxes = [];
+            state.annotatedFrames = {};
+            state.videoTotalFrames = 0;
+            videoResultsContainer.style.display = 'none';
+            
+            // 清除canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            console.log('[Clear] Video annotations cleared');
+        }
     });
 
     saveBtn.addEventListener('click', () => {
@@ -383,25 +396,6 @@ document.addEventListener('DOMContentLoaded', () => {
         
         console.log(`[Video Response] Total frames: ${state.videoTotalFrames}`);
         console.log(`[Video Response] Frame keys:`, Object.keys(frameData));
-
-        // --- Handle Debug Images ---
-        if (data.debug_images) {
-            console.log("[DEBUG] Received debug images:", Object.keys(data.debug_images));
-            const debugContainer = document.createElement('div');
-            debugContainer.style.cssText = 'position: fixed; top: 10px; right: 10px; z-index: 9999; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); max-width: 400px;';
-            
-            let debugHtml = '<h4 style="margin: 0 0 10px 0; color: #333;">🐛 Debug Frames</h4>';
-            for (const [key, base64String] of Object.entries(data.debug_images)) {
-                debugHtml += `<div style="margin-bottom: 10px;">
-                    <p style="margin: 5px 0; font-weight: bold; color: #666;">${key}</p>
-                    <img src="${base64String}" style="max-width: 100%; border-radius: 4px; border: 1px solid #ddd;">
-                </div>`;
-            }
-            
-            debugContainer.innerHTML = debugHtml;
-            document.body.appendChild(debugContainer);
-            console.log("[DEBUG] Debug images displayed in fixed container");
-        }
 
         videoResultsContainer.style.display = 'block';
         frameSlider.max = state.videoTotalFrames > 0 ? state.videoTotalFrames - 1 : 0;
