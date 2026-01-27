@@ -192,6 +192,7 @@ class SAM3Annotator:
                     mask_tensor = video_res_masks[i]
 
                     mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
+                    print(f"mask_np_binary sum for obj {obj_id}: {np.sum(mask_np_binary)}")
                     mask_255 = mask_np_binary * 255
                     blurred_mask = cv2.GaussianBlur(mask_255, (5, 5), 0)
                     
