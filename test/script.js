@@ -22,6 +22,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const textPromptContainer = document.getElementById('text-prompt-container');
     const textPromptInput = document.getElementById('text-prompt');
     const submitImageBtn = document.getElementById('submit-image-btn');
+    
+    // --- Auto Mode Elements (Image) ---
+    const manualModeBtn = document.getElementById('manual-mode-btn');
+    const autoModeBtn = document.getElementById('auto-mode-btn');
+    const manualPromptContainer = document.getElementById('manual-prompt-container');
+    const autoPromptContainer = document.getElementById('auto-prompt-container');
 
     // --- Video Mode Elements ---
     const videoLoader = document.getElementById('video-loader');
@@ -29,10 +35,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const videoPlayer = document.getElementById('video-player');
     const frameSlider = document.getElementById('frame-slider');
     const frameLabel = document.getElementById('frame-label');
+    
+    // --- Auto Mode Elements (Video) ---
+    const videoManualModeBtn = document.getElementById('video-manual-mode-btn');
+    const videoAutoModeBtn = document.getElementById('video-auto-mode-btn');
+    const videoManualPromptContainer = document.getElementById('video-manual-prompt-container');
+    const videoAutoPromptContainer = document.getElementById('video-auto-prompt-container');
 
     // --- State ---
     let state = {
         globalMode: 'image', // 'image' or 'video'
+        imageAnnotationMode: 'manual', // 'manual' or 'auto'
+        videoAnnotationMode: 'manual', // 'manual' or 'auto'
         image: null,
         imgState: {
             modes: new Set(),
@@ -58,6 +72,50 @@ document.addEventListener('DOMContentLoaded', () => {
         const rect = canvas.getBoundingClientRect();
         return { x: e.clientX - rect.left, y: e.clientY - rect.top };
     }
+
+    // ===================================================================
+    // --- IMAGE ANNOTATION MODE TOGGLE ---
+    // ===================================================================
+
+    manualModeBtn.addEventListener('click', () => {
+        state.imageAnnotationMode = 'manual';
+        manualModeBtn.classList.add('active');
+        autoModeBtn.classList.remove('active');
+        manualPromptContainer.style.display = 'block';
+        autoPromptContainer.style.display = 'none';
+        console.log('[Mode] Switched to manual image annotation mode');
+    });
+
+    autoModeBtn.addEventListener('click', () => {
+        state.imageAnnotationMode = 'auto';
+        autoModeBtn.classList.add('active');
+        manualModeBtn.classList.remove('active');
+        manualPromptContainer.style.display = 'none';
+        autoPromptContainer.style.display = 'block';
+        console.log('[Mode] Switched to auto image annotation mode');
+    });
+
+    // ===================================================================
+    // --- VIDEO ANNOTATION MODE TOGGLE ---
+    // ===================================================================
+
+    videoManualModeBtn.addEventListener('click', () => {
+        state.videoAnnotationMode = 'manual';
+        videoManualModeBtn.classList.add('active');
+        videoAutoModeBtn.classList.remove('active');
+        videoManualPromptContainer.style.display = 'block';
+        videoAutoPromptContainer.style.display = 'none';
+        console.log('[Mode] Switched to manual video annotation mode');
+    });
+
+    videoAutoModeBtn.addEventListener('click', () => {
+        state.videoAnnotationMode = 'auto';
+        videoAutoModeBtn.classList.add('active');
+        videoManualModeBtn.classList.remove('active');
+        videoManualPromptContainer.style.display = 'none';
+        videoAutoPromptContainer.style.display = 'block';
+        console.log('[Mode] Switched to auto video annotation mode');
+    });
 
     clearBtn.addEventListener('click', () => {
         // 只清除标注结果，保留已加载的图片/视频
@@ -168,18 +226,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     submitImageBtn.addEventListener('click', async () => {
         if (!state.image) return alert('Please load an image.');
-        const payload = { image_base64: getBase64FromImage(state.image) };
-        let hasPrompts = false;
-        if (textPromptInput.value) {
-            payload.texts = [{ text: textPromptInput.value }];
-            hasPrompts = true;
+        
+        let apiUrl;
+        let payload = { image_base64: getBase64FromImage(state.image) };
+        
+        if (state.imageAnnotationMode === 'auto') {
+            // 自动模式：无需任何提示
+            apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_auto`;
+        } else {
+            // 手动模式：需要提示
+            let hasPrompts = false;
+            if (textPromptInput.value) {
+                payload.texts = [{ text: textPromptInput.value }];
+                hasPrompts = true;
+            }
+            if (state.imgState.boxes.length > 0) {
+                payload.boxes = state.imgState.boxes;
+                hasPrompts = true;
+            }
+            if (!hasPrompts) return alert('Please provide a text or box prompt.');
+            apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict`;
         }
-        if (state.imgState.boxes.length > 0) {
-            payload.boxes = state.imgState.boxes;
-            hasPrompts = true;
-        }
-        if (!hasPrompts) return alert('Please provide a text or box prompt.');
-        const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict`;
+        
         await submitRequest(apiUrl, payload, 'image');
     });
 
@@ -212,12 +280,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
     trackVideoBtn.addEventListener('click', async () => {
         if (!state.videoBase64) return alert('Please load a video.');
-        if (state.videoBoxes.length === 0) return alert('Please add at least one box prompt on the first frame.');
-        const payload = {
-            video_base64: state.videoBase64,
-            boxes: state.videoBoxes,
-        };
-        const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video`;
+        
+        let apiUrl;
+        let payload = { video_base64: state.videoBase64 };
+        
+        if (state.videoAnnotationMode === 'auto') {
+            // 自动模式：无需任何提示
+            apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video_auto`;
+        } else {
+            // 手动模式：需要框选提示
+            if (state.videoBoxes.length === 0) return alert('Please add at least one box prompt on the first frame.');
+            payload.boxes = state.videoBoxes;
+            apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video`;
+        }
+        
         await submitRequest(apiUrl, payload, 'video');
     });
 
@@ -241,8 +317,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // ===================================================================
 
     canvas.addEventListener('mousedown', (e) => {
-        const canDrawBox = state.globalMode === 'image' && state.imgState.modes.has('box');
-        const canDrawVideoBox = state.globalMode === 'video' && videoPlayer.src;
+        const canDrawBox = state.globalMode === 'image' && state.imgState.modes.has('box') && state.imageAnnotationMode === 'manual';
+        const canDrawVideoBox = state.globalMode === 'video' && videoPlayer.src && state.videoAnnotationMode === 'manual';
         if (canDrawBox || canDrawVideoBox) {
             state.imgState.isDrawing = true;
             state.imgState.startPoint = getCanvasCoords(e);
