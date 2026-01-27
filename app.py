@@ -93,16 +93,19 @@ async def predict_video(request: VideoAnnotationRequest):
         tb_str = traceback.format_exc()
         raise HTTPException(status_code=500, detail=f"Video inference error: {str(e)}\n\nTraceback:\n{tb_str}")
 
-    # --- DEBUG: Save the first frame to a file ---
+    debug_image_b64 = None # Initialize
+    # --- DEBUG: Save first frame as image ---
     if "0" in frame_results:
         try:
             print("[DEBUG] Saving frame 0 to debug_frame_0.jpg")
             # The string is "data:image/jpeg;base64,..." - we need to split it
-            header, b64_str = frame_results["0"].split(",", 1)
-            img_data = base64.b64decode(b64_str)
+            # NOTE: We now get the raw b64_str from here, before prepending the data URI header
+            header, raw_b64_str = frame_results["0"].split(",", 1)
+            img_data = base64.b64decode(raw_b64_str)
             with open("debug_frame_0.jpg", "wb") as f:
                 f.write(img_data)
             print("[DEBUG] Successfully saved debug_frame_0.jpg")
+            debug_image_b64 = f"data:image/jpeg;base64,{raw_b64_str}" # Store with prefix for response
         except Exception as e:
             print(f"[DEBUG] FAILED to save debug frame: {e}")
     # --- END DEBUG ---
@@ -112,7 +115,7 @@ async def predict_video(request: VideoAnnotationRequest):
     prefixed_frame_results = {}
     for frame_idx, b64_string in frame_results.items():
         prefixed_frame_results[frame_idx] = f"data:image/jpeg;base64,{b64_string}"
-    return VideoAnnotationResponse(frames=prefixed_frame_results)
+    return VideoAnnotationResponse(frames=prefixed_frame_results, debug_image_base64=debug_image_b64)
 
 if __name__ == "__main__":
     import uvicorn

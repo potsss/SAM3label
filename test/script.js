@@ -211,7 +211,7 @@ document.addEventListener('DOMContentLoaded', () => {
     frameSlider.addEventListener('input', (e) => {
         const frame = parseInt(e.target.value);
         frameLabel.textContent = frame;
-        drawVideoFrame(frame);
+        drawVideoFrame(String(frame));
     });
 
     // ===================================================================
@@ -351,6 +351,14 @@ document.addEventListener('DOMContentLoaded', () => {
     async function processVideoResponse(data) {
         const frameData = data.frames || {};
         state.videoTotalFrames = Object.keys(frameData).length;
+
+        if (data.debug_image_base64) {
+            console.log("Debug Image Base64:", data.debug_image_base64);
+            // Optionally, create an img element to display it
+            // const debugImg = new Image();
+            // debugImg.src = data.debug_image_base64;
+            // document.body.appendChild(debugImg); // Or a specific container
+        }
 
         videoResultsContainer.style.display = 'block';
         frameSlider.max = state.videoTotalFrames > 0 ? state.videoTotalFrames - 1 : 0;
