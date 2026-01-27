@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SAM3 Interactive Tester</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>SAM3 Interactive Tester</h1>
+    <div class="main-container">
+        <div class="controls">
+            <h2>1. Select Mode</h2>
+            <div class="prompt-buttons">
+                <button id="image-mode-btn" class="mode-btn active">Image</button>
+                <button id="video-mode-btn" class="mode-btn">Video</button>
+            </div>
+
+            <div id="image-controls">
+                <h2>2. Load Image</h2>
+                <input type="file" id="image-loader" accept="image/*">
+                
+                <h2>3. Add Prompts (Image)</h2>
+                <div class="prompt-buttons">
+                    <button id="text-btn" class="prompt-btn">Text</button>
+                    <button id="box-btn" class="prompt-btn">Box</button>
+                </div>
+                <div id="text-prompt-container" style="display:none;">
+                    <input type="text" id="text-prompt" placeholder="Enter text prompt...">
+                </div>
+                <button id="submit-image-btn">Annotate Image</button>
+            </div>
+
+            <div id="video-controls" style="display:none;">
+                <h2>2. Load Video</h2>
+                <input type="file" id="video-loader" accept="video/*">
+                <h2>3. Add Box Prompts on First Frame</h2>
+                <p>Click and drag on the first frame to draw bounding boxes around objects for tracking.</p>
+                <button id="track-video-btn">Track Objects in Video</button>
+            </div>
+
+            <h2>4. Actions</h2>
+            <button id="clear-btn">Clear Prompts & Results</button>
+            <button id="save-btn">Save Current Frame</button>
+
+            <div class="server-info">
+                <label for="server-ip">Server IP:</label>
+                <input type="text" id="server-ip" value="112.51.6.147">
+                <label for="server-port">Port:</label>
+                <input type="text" id="server-port" value="8069">
+            </div>
+        </div>
+        <div class="canvas-container">
+            <canvas id="canvas"></canvas>
+            <div id="video-player-container" style="display:none;">
+                <video id="video-player" controls></video>
+            </div>
+            <div id="video-results-container" style="display:none;">
+                <h3>Video Results</h3>
+                <label for="frame-slider">Frame:</label>
+                <input type="range" id="frame-slider" min="0" value="0">
+                <span id="frame-label">0</span>
+            </div>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
