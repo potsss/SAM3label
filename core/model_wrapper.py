@@ -186,23 +186,24 @@ class SAM3Annotator:
                     video_res_masks = video_res_masks_list[0].squeeze(1)
                     print(f"[DEBUG] Found {video_res_masks.shape[0]} masks for frame {frame_idx}.")
                     
-                    # Convert masks to numpy with proper scaling (0-1 to 0-255)
-                    masks_np = (video_res_masks.cpu().numpy() * 255).astype(np.uint8)
+                    # Get raw mask values (0-1 range) before converting
+                    masks_raw = video_res_masks.cpu().numpy()
+                    print(f"[DEBUG] Raw mask stats - Min: {masks_raw.min():.4f}, Max: {masks_raw.max():.4f}, Mean: {masks_raw.mean():.4f}")
                     
-                    # DEBUG: Check mask values
-                    print(f"[DEBUG] Mask stats - Min: {masks_np.min()}, Max: {masks_np.max()}, Mean: {masks_np.mean():.2f}")
-                    print(f"[DEBUG] Mask shape: {masks_np.shape}")
-                    
-                    # USE inference_session.obj_ids instead of local obj_ids!
-                    tracking_obj_ids = inference_session.obj_ids
-                    print(f"[DEBUG] tracking_obj_ids from inference_session: {tracking_obj_ids}, length: {len(tracking_obj_ids)}")
+                    # Apply threshold to binarize masks (0.5 threshold as per official examples)
+                    masks_binary = (masks_raw > 0.5).astype(np.uint8) * 255
+                    print(f"[DEBUG] After threshold (0.5) - Min: {masks_binary.min()}, Max: {masks_binary.max()}, Sum: {masks_binary.sum()}")
                     
                     # Create a copy of the frame to work with (in BGR for OpenCV operations)
                     frame_cv = cv2.cvtColor(np.array(pil_frame_rgb), cv2.COLOR_RGB2BGR)
                     print(f"[DEBUG] Frame shape: {frame_cv.shape}, dtype: {frame_cv.dtype}")
                     
+                    # Use inference_session.obj_ids for tracking
+                    tracking_obj_ids = inference_session.obj_ids
+                    print(f"[DEBUG] tracking_obj_ids from inference_session: {tracking_obj_ids}, length: {len(tracking_obj_ids)}")
+                    
                     # Define colors for each object (BGR format for OpenCV)
-                    n_masks = masks_np.shape[0]
+                    n_masks = masks_binary.shape[0]
                     colors_bgr = [
                         ((i * 60) % 256, (255 - (i * 60) % 256), ((i * 60 + 128) % 256))
                         for i in range(n_masks)
@@ -212,26 +213,26 @@ class SAM3Annotator:
                     composited_count = 0
                     for i, obj_id in enumerate(tracking_obj_ids):
                         print(f"[DEBUG] Loop iteration {i}, obj_id: {obj_id}")
-                        if i >= masks_np.shape[0]:
+                        if i >= masks_binary.shape[0]:
                             print(f"[DEBUG] Warning: Model returned fewer masks than tracked objects. Stopping at mask {i}.")
                             break
 
-                        mask_np = masks_np[i]
+                        mask_np = masks_binary[i]
                         color_bgr = colors_bgr[i]
                         
-                        print(f"[DEBUG] Processing mask {i}: color={color_bgr}, shape={mask_np.shape}, min={mask_np.min()}, max={mask_np.max()}")
+                        # Count non-zero pixels in mask
+                        mask_area = np.count_nonzero(mask_np)
+                        print(f"[DEBUG] Processing mask {i}: color={color_bgr}, mask_area={mask_area} pixels, min={mask_np.min()}, max={mask_np.max()}")
                         
                         # Create a colored overlay for this mask
                         colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
                         colored_overlay[:, :] = color_bgr
-                        print(f"[DEBUG] Created colored overlay with shape: {colored_overlay.shape}")
                         
-                        # Use mask as alpha: where mask is high, show color; where mask is low, show original
-                        # Normalize mask to 0-1 for alpha blending (use full transparency, not 0.5)
-                        alpha = mask_np.astype(float) / 255.0  # Full transparency based on mask
-                        print(f"[DEBUG] Alpha channel - min: {alpha.min():.3f}, max: {alpha.max():.3f}, mean: {alpha.mean():.3f}")
+                        # Use binary mask as alpha: 0 = fully original, 255 = fully color
+                        alpha = mask_np.astype(float) / 255.0 * 0.6  # 60% transparency for color
+                        print(f"[DEBUG] Alpha range - min: {alpha.min():.3f}, max: {alpha.max():.3f}, mean: {alpha.mean():.3f}")
                         
-                        # Blend each channel
+                        # Blend each channel only where mask is non-zero
                         for c in range(3):  # For each channel (BGR)
                             frame_cv[:, :, c] = (
                                 frame_cv[:, :, c] * (1 - alpha) + 
@@ -239,7 +240,7 @@ class SAM3Annotator:
                             ).astype(np.uint8)
                         
                         composited_count += 1
-                        print(f"[DEBUG] ✓ Successfully blended mask {i}")
+                        print(f"[DEBUG] ✓ Successfully blended mask {i} with area {mask_area}")
                     
                     # Convert back to RGB for PIL
                     frame_cv_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
