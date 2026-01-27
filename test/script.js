@@ -211,7 +211,11 @@ document.addEventListener('DOMContentLoaded', () => {
     frameSlider.addEventListener('input', (e) => {
         const frame = parseInt(e.target.value);
         frameLabel.textContent = frame;
-        drawVideoFrame(String(frame));
+        if (state.annotatedFrames[frame]) {
+            drawVideoFrame(frame);
+        } else {
+            console.warn(`Frame ${frame} not loaded yet`);
+        }
     });
 
     // ===================================================================
@@ -301,9 +305,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function drawVideoFrame(frameIndex) {
-        const annotatedImage = state.annotatedFrames[frameIndex];
+        const frameKey = String(frameIndex);
+        const annotatedImage = state.annotatedFrames[frameKey];
         if (annotatedImage && annotatedImage.complete) {
             drawImageScaled(annotatedImage, canvas);
+            console.log(`Successfully drew frame ${frameIndex}`);
+        } else {
+            console.warn(`Frame ${frameIndex} not found or not loaded`);
         }
     }
 
@@ -365,6 +373,13 @@ document.addEventListener('DOMContentLoaded', () => {
         frameSlider.value = 0;
         frameLabel.textContent = '0';
         
+        // Update total frames display if exists
+        const frameTotal = document.getElementById('frame-total');
+        if (frameTotal) {
+            frameTotal.textContent = state.videoTotalFrames > 0 ? state.videoTotalFrames - 1 : 0;
+        }
+        
+        console.log(`Video processing complete. Total frames: ${state.videoTotalFrames}`);
         await loadAnnotatedFrames(frameData);
 
         drawVideoFrame(0); // Draw the first annotated frame
