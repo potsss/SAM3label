@@ -34,5 +34,5 @@ class VideoAnnotationRequest(BaseModel):
 class VideoAnnotationResponse(BaseModel):
     # The keys will be frame numbers as strings, and values are the base64 encoded annotated frames
     frames: dict[str, str]
-    debug_image_base64: Optional[str] = None
+    debug_images: Optional[dict[str, str]] = None  # Keys like "frame_0", "frame_1", values are base64 strings
 

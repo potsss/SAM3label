@@ -211,10 +211,15 @@ document.addEventListener('DOMContentLoaded', () => {
     frameSlider.addEventListener('input', (e) => {
         const frame = parseInt(e.target.value);
         frameLabel.textContent = frame;
-        if (state.annotatedFrames[frame]) {
+        console.log(`[Slider] Moving to frame ${frame}, checking state.annotatedFrames...`);
+        console.log(`[Slider] Available frames:`, Object.keys(state.annotatedFrames));
+        
+        const frameKey = String(frame);
+        if (frameKey in state.annotatedFrames) {
+            console.log(`[Slider] Frame ${frameKey} found, drawing...`);
             drawVideoFrame(frame);
         } else {
-            console.warn(`Frame ${frame} not loaded yet`);
+            console.warn(`[Slider] Frame ${frameKey} not loaded yet. Available: ${Object.keys(state.annotatedFrames).join(', ')}`);
         }
     });
 
@@ -306,12 +311,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function drawVideoFrame(frameIndex) {
         const frameKey = String(frameIndex);
+        console.log(`[drawVideoFrame] Drawing frame ${frameIndex} (key: '${frameKey}')`);
+        console.log(`[drawVideoFrame] Frame exists:`, frameKey in state.annotatedFrames);
+        
         const annotatedImage = state.annotatedFrames[frameKey];
-        if (annotatedImage && annotatedImage.complete) {
-            drawImageScaled(annotatedImage, canvas);
-            console.log(`Successfully drew frame ${frameIndex}`);
+        if (annotatedImage) {
+            console.log(`[drawVideoFrame] Image found. Complete: ${annotatedImage.complete}, Width: ${annotatedImage.width}, Height: ${annotatedImage.height}`);
+            if (annotatedImage.complete) {
+                drawImageScaled(annotatedImage, canvas);
+                console.log(`[drawVideoFrame] ✓ Successfully drew frame ${frameIndex} on canvas`);
+            } else {
+                console.warn(`[drawVideoFrame] Image not complete yet for frame ${frameIndex}`);
+                // Wait a bit and retry
+                setTimeout(() => {
+                    if (annotatedImage.complete) {
+                        drawImageScaled(annotatedImage, canvas);
+                        console.log(`[drawVideoFrame] ✓ Drew frame ${frameIndex} after retry`);
+                    }
+                }, 100);
+            }
         } else {
-            console.warn(`Frame ${frameIndex} not found or not loaded`);
+            console.warn(`[drawVideoFrame] ✗ Frame ${frameIndex} not found in state.annotatedFrames`);
+            console.warn(`[drawVideoFrame] Available frames:`, Object.keys(state.annotatedFrames));
         }
     }
 
@@ -359,13 +380,27 @@ document.addEventListener('DOMContentLoaded', () => {
     async function processVideoResponse(data) {
         const frameData = data.frames || {};
         state.videoTotalFrames = Object.keys(frameData).length;
+        
+        console.log(`[Video Response] Total frames: ${state.videoTotalFrames}`);
+        console.log(`[Video Response] Frame keys:`, Object.keys(frameData));
 
-        if (data.debug_image_base64) {
-            console.log("Debug Image Base64:", data.debug_image_base64);
-            // Optionally, create an img element to display it
-            // const debugImg = new Image();
-            // debugImg.src = data.debug_image_base64;
-            // document.body.appendChild(debugImg); // Or a specific container
+        // --- Handle Debug Images ---
+        if (data.debug_images) {
+            console.log("[DEBUG] Received debug images:", Object.keys(data.debug_images));
+            const debugContainer = document.createElement('div');
+            debugContainer.style.cssText = 'position: fixed; top: 10px; right: 10px; z-index: 9999; background: white; padding: 15px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); max-width: 400px;';
+            
+            let debugHtml = '<h4 style="margin: 0 0 10px 0; color: #333;">🐛 Debug Frames</h4>';
+            for (const [key, base64String] of Object.entries(data.debug_images)) {
+                debugHtml += `<div style="margin-bottom: 10px;">
+                    <p style="margin: 5px 0; font-weight: bold; color: #666;">${key}</p>
+                    <img src="${base64String}" style="max-width: 100%; border-radius: 4px; border: 1px solid #ddd;">
+                </div>`;
+            }
+            
+            debugContainer.innerHTML = debugHtml;
+            document.body.appendChild(debugContainer);
+            console.log("[DEBUG] Debug images displayed in fixed container");
         }
 
         videoResultsContainer.style.display = 'block';
@@ -379,10 +414,12 @@ document.addEventListener('DOMContentLoaded', () => {
             frameTotal.textContent = state.videoTotalFrames > 0 ? state.videoTotalFrames - 1 : 0;
         }
         
-        console.log(`Video processing complete. Total frames: ${state.videoTotalFrames}`);
+        console.log(`[Video Response] Loading ${state.videoTotalFrames} frames...`);
         await loadAnnotatedFrames(frameData);
+        console.log(`[Video Response] Frames loaded. Drawing frame 0...`);
 
-        drawVideoFrame(0); // Draw the first annotated frame
+        // Draw the first annotated frame
+        drawVideoFrame(0);
     }
     
     function loadMaskImages(maskList) {
@@ -402,17 +439,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     
     function loadAnnotatedFrames(frameData) {
+        console.log(`[loadAnnotatedFrames] Loading ${Object.keys(frameData).length} frames`);
         const promises = Object.entries(frameData).map(([frameIndex, base64String]) => {
             return new Promise((resolve) => {
                 const img = new Image();
-                img.src = base64String;
                 img.onload = () => {
                     state.annotatedFrames[frameIndex] = img;
+                    console.log(`[loadAnnotatedFrames] ✓ Loaded frame ${frameIndex} (${img.width}x${img.height})`);
                     resolve();
                 };
-                img.onerror = () => resolve(); // Continue even if one frame fails
+                img.onerror = (err) => {
+                    console.error(`[loadAnnotatedFrames] ✗ Failed to load frame ${frameIndex}:`, err);
+                    resolve(); // Continue even if one frame fails
+                };
+                img.src = base64String;
             });
         });
-        return Promise.all(promises);
+        return Promise.all(promises).then(() => {
+            console.log(`[loadAnnotatedFrames] All frames loaded. Total: ${Object.keys(state.annotatedFrames).length}`);
+        });
     }
 });

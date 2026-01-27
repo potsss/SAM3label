@@ -93,29 +93,31 @@ async def predict_video(request: VideoAnnotationRequest):
         tb_str = traceback.format_exc()
         raise HTTPException(status_code=500, detail=f"Video inference error: {str(e)}\n\nTraceback:\n{tb_str}")
 
-    debug_image_b64 = None # Initialize
-    # --- DEBUG: Save first frame as image ---
-    if "0" in frame_results:
-        try:
-            print("[DEBUG] Saving frame 0 to debug_frame_0.jpg")
-            # The string is "data:image/jpeg;base64,..." - we need to split it
-            # NOTE: We now get the raw b64_str from here, before prepending the data URI header
-            header, raw_b64_str = frame_results["0"].split(",", 1)
-            img_data = base64.b64decode(raw_b64_str)
-            with open("debug_frame_0.jpg", "wb") as f:
-                f.write(img_data)
-            print("[DEBUG] Successfully saved debug_frame_0.jpg")
-            debug_image_b64 = f"data:image/jpeg;base64,{raw_b64_str}" # Store with prefix for response
-        except Exception as e:
-            print(f"[DEBUG] FAILED to save debug frame: {e}")
+    debug_images = {}
+    
+    # --- DEBUG: Save and return frame 0 and frame 1 ---
+    for frame_num in ["0", "1"]:
+        if frame_num in frame_results:
+            try:
+                print(f"[DEBUG] Processing frame {frame_num}")
+                # The string is "data:image/jpeg;base64,..." - extract the raw b64 string
+                if "," in frame_results[frame_num]:
+                    header, raw_b64_str = frame_results[frame_num].split(",", 1)
+                else:
+                    raw_b64_str = frame_results[frame_num]
+                
+                img_data = base64.b64decode(raw_b64_str)
+                filename = f"debug_frame_{frame_num}.jpg"
+                with open(filename, "wb") as f:
+                    f.write(img_data)
+                print(f"[DEBUG] Successfully saved {filename}")
+                debug_images[f"frame_{frame_num}"] = f"data:image/jpeg;base64,{raw_b64_str}"
+            except Exception as e:
+                print(f"[DEBUG] FAILED to process frame {frame_num}: {e}")
     # --- END DEBUG ---
 
     # 4. Format Response
-    # Prepend data URI header to each base64 string
-    prefixed_frame_results = {}
-    for frame_idx, b64_string in frame_results.items():
-        prefixed_frame_results[frame_idx] = f"data:image/jpeg;base64,{b64_string}"
-    return VideoAnnotationResponse(frames=prefixed_frame_results, debug_image_base64=debug_image_b64)
+    return VideoAnnotationResponse(frames=frame_results, debug_images=debug_images if debug_images else None)
 
 if __name__ == "__main__":
     import uvicorn
