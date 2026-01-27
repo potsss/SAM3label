@@ -140,9 +140,9 @@ class SAM3Annotator:
             # 4. Add the generated masks as prompts
             obj_ids = list(range(1, len(initial_masks_tensor) + 1))
             # Add a batch dimension for the session input: (num_objects, H, W) -> (1, num_objects, H, W)
-            input_masks = initial_masks_tensor.unsqueeze(0)
+            input_masks = initial_masks_tensor.unsqueeze(1)
             
-            print(f"Adding {len(obj_ids)} masks to the tracking session.")
+            print(f"Adding {len(obj_ids)} masks to the tracking session with input_masks shape: {input_masks.shape}")
             self.pvs_tracker_processor.add_inputs_to_inference_session(
                 inference_session=inference_session,
                 frame_idx=0,
