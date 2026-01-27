@@ -122,17 +122,14 @@ class SAM3Annotator:
             video_path = tmpfile.name
 
         try:
-            # 1. Initialize video session in streaming mode (no video frames passed)
             inference_session = self.pvs_tracker_processor.init_video_session(
                 inference_device=self.device,
-                dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+                dtype=torch.bfloat16 if self.device == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
             )
 
-            # 2. Add box prompts for the first frame
             obj_ids = list(range(1, len(boxes) + 1))
             input_boxes = np.array(boxes).reshape(1, len(boxes), 4).tolist()
             
-            # 3. Open video and process frame by frame
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
                 raise Exception("Could not open video file.")
@@ -140,7 +137,7 @@ class SAM3Annotator:
             video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             
-            video_segments = {}
+            annotated_frames = {}
             frame_idx = 0
             
             while True:
@@ -148,13 +145,9 @@ class SAM3Annotator:
                 if not ret:
                     break
 
-                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                pil_frame = Image.fromarray(frame_rgb)
-
-                # Process a single frame to get correct input shapes
+                pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 inputs = self.pvs_tracker_processor(images=pil_frame, return_tensors="pt")
 
-                # On the first frame, add the user's prompts to the session
                 if frame_idx == 0:
                     self.pvs_tracker_processor.add_inputs_to_inference_session(
                         inference_session=inference_session,
@@ -164,57 +157,57 @@ class SAM3Annotator:
                         original_size=inputs.original_sizes[0],
                     )
 
-                # 4. Propagate model on the current frame
                 with torch.no_grad():
                     model_outputs = self.pvs_tracker_model(
                         inference_session=inference_session,
                         frame=inputs.pixel_values[0].to(self.device),
                         multimask_output=False
                     )                
-                # 5. Post-process the masks for the current frame
+                
                 video_res_masks_list = self.pvs_tracker_processor.post_process_masks(
                     [model_outputs.pred_masks], 
                     original_sizes=[[video_height, video_width]], 
                     binarize=False
                 )
-                if not video_res_masks_list:
-                    video_segments[str(frame_idx)] = []
-                    frame_idx += 1
-                    continue
-                
-                video_res_masks = video_res_masks_list[0].squeeze(1)
 
-                frame_masks = []
-                for i, obj_id in enumerate(obj_ids):
-                    if i >= video_res_masks.shape[0]:
-                        break  # Stop if model returned fewer masks than objects
+                # Start with the original frame (as a PIL image)
+                final_frame_pil = pil_frame.convert("RGBA")
 
-                    mask_tensor = video_res_masks[i]
-
-                    mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
-                    mask_255 = mask_np_binary * 255
-                    blurred_mask = cv2.GaussianBlur(mask_255, (5, 5), 0)
+                if video_res_masks_list:
+                    video_res_masks = video_res_masks_list[0].squeeze(1)
                     
-                    colored_mask = np.zeros((mask_np_binary.shape[0], mask_np_binary.shape[1], 4), dtype=np.uint8)
-                    color_val = (i * 50) % 256
-                    color = np.array([color_val, 255 - color_val, (color_val + 128) % 256])
-                    colored_mask[blurred_mask > 0, :3] = color
-                    colored_mask[:, :, 3] = blurred_mask
+                    # Create a single overlay for all masks in this frame
+                    combined_overlay = Image.new("RGBA", final_frame_pil.size, (0, 0, 0, 0))
 
-                    mask_img = Image.fromarray(colored_mask, 'RGBA')
-                    buffer = io.BytesIO()
-                    mask_img.save(buffer, format="PNG")
-                    b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                    for i, obj_id in enumerate(obj_ids):
+                        if i >= video_res_masks.shape[0]:
+                            break
 
-                    frame_masks.append({
-                        "label": f"object_{obj_id}",
-                        "mask_base64": f"data:image/png;base64,{b64_str}"
-                    })
-                video_segments[str(frame_idx)] = frame_masks
+                        mask_tensor = video_res_masks[i]
+                        mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
+                        
+                        # Create a colored RGBA mask for this object
+                        colored_mask_img = Image.new("RGBA", final_frame_pil.size)
+                        color_val = (i * 60) % 256
+                        color = (color_val, 255 - color_val, (color_val + 128) % 256, 150) # RGBA with alpha
+                        
+                        # Create a drawable version of the mask
+                        mask_for_drawing = Image.fromarray(mask_np_binary * 255, 'L')
+                        combined_overlay.paste(color, (0,0), mask_for_drawing)
+
+                    # Composite the combined mask overlay onto the frame
+                    final_frame_pil = Image.alpha_composite(final_frame_pil, combined_overlay)
+
+                # Encode the final annotated frame to Base64
+                buffer = io.BytesIO()
+                final_frame_pil.convert("RGB").save(buffer, format="JPEG")
+                b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+                annotated_frames[str(frame_idx)] = f"data:image/jpeg;base64,{b64_str}"
                 frame_idx += 1
 
             cap.release()
-            return video_segments
+            return annotated_frames
 
         finally:
             if os.path.exists(video_path):

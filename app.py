@@ -92,20 +92,6 @@ async def predict_video(request: VideoAnnotationRequest):
         tb_str = traceback.format_exc()
         raise HTTPException(status_code=500, detail=f"Video inference error: {str(e)}\n\nTraceback:\n{tb_str}")
 
-    print("Backend predict_video response (frame_results):")
-    # Pretty print a truncated version of frame_results to avoid flooding logs
-    # Show only the first frame and its first mask's base64 prefix
-    truncated_results = {}
-    for frame_idx, masks in list(frame_results.items())[:1]: # Check only first frame
-        truncated_masks = []
-        for mask_data in list(masks)[:1]: # Check only first mask
-            truncated_masks.append({
-                "label": mask_data.get("label"),
-                "mask_base64_prefix": mask_data.get("mask_base64", "")[:50] + "..." # Truncate base64
-            })
-        truncated_results[frame_idx] = truncated_masks
-    print(json.dumps(truncated_results, indent=2))
-    
     # 4. Format Response
     return VideoAnnotationResponse(frames=frame_results)
 

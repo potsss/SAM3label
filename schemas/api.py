@@ -32,7 +32,6 @@ class VideoAnnotationRequest(BaseModel):
     boxes: List[BoxPrompt] = Field(..., description="List of initial box prompts on the first frame.")
 
 class VideoAnnotationResponse(BaseModel):
-    # The keys will be frame numbers as strings, e.g., "0", "1", "2"...
-    frames: dict[str, List[MaskResult]]
-    message: str = "Success"
+    # The keys will be frame numbers as strings, and values are the base64 encoded annotated frames
+    frames: dict[str, str]
 
