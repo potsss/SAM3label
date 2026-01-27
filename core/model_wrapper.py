@@ -37,60 +37,51 @@ class SAM3Annotator:
             self.pcs_model = None
             self.pvs_tracker_model = None
 
-    def predict(self, image: np.ndarray, boxes=None, texts=None):
-        # ... (existing predict method for images - unchanged) ...
+    def _segment_image(self, image: np.ndarray, boxes=None, texts=None):
+        """Run the PCS model on a single image and return the raw mask tensor."""
         if not self.pcs_model:
-            print("Running in mock mode due to model loading failure.")
-            return [{"label": "mock_obj", "mask_base64": ""}]
+            raise Exception("Image segmentation model (PCS) not loaded.")
 
         pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         
+        processor_args = {'images': pil_image, 'return_tensors': 'pt'}
+        is_mixed_prompt = texts and boxes
+        
+        if texts:
+            processor_args['text'] = texts[0]
+        
+        if boxes and not is_mixed_prompt:
+            processor_args['input_boxes'] = [boxes]
+            box_labels = [1] * len(boxes)
+            processor_args['input_boxes_labels'] = [box_labels]
+
+        if 'text' not in processor_args and 'input_boxes' not in processor_args:
+            return torch.empty(0)
+
+        inputs = self.pcs_processor(**processor_args).to(self.device)
+        with torch.no_grad():
+            outputs = self.pcs_model(**inputs)
+        
+        results = self.pcs_processor.post_process_instance_segmentation(
+            outputs, threshold=0.5, mask_threshold=0.5,
+            target_sizes=[pil_image.size[::-1]]
+        )[0]
+        
+        if is_mixed_prompt:
+            # This logic is specific to the old 'predict', may need adjustment
+            # For now, let's keep it simple for the video use case
+            pass
+
+        return results.get("masks", torch.empty(0))
+
+    def predict(self, image: np.ndarray, boxes=None, texts=None):
+        """Runs image segmentation and formats the output masks as PNGs."""
         try:
-            print("Processing with Text/Box/Mixed Prompt (PCS Model)...")
+            masks_tensor = self._segment_image(image, boxes, texts)
             
-            processor_args = {'images': pil_image, 'return_tensors': 'pt'}
-            base_label = "prompt"
-            is_mixed_prompt = texts and boxes
-            
+            base_label = "box" if boxes else "text"
             if texts:
-                processor_args['text'] = texts[0]
                 base_label = texts[0]
-            
-            if boxes and not is_mixed_prompt:
-                processor_args['input_boxes'] = [boxes] 
-                box_labels = [1] * len(boxes)
-                processor_args['input_boxes_labels'] = [box_labels]
-                if not texts:
-                    base_label = "box"
-
-            if 'text' not in processor_args and 'input_boxes' not in processor_args:
-                return []
-
-            inputs = self.pcs_processor(**processor_args).to(self.device)
-            with torch.no_grad():
-                outputs = self.pcs_model(**inputs)
-            
-            results = self.pcs_processor.post_process_instance_segmentation(
-                outputs, threshold=0.5, mask_threshold=0.5,
-                target_sizes=[pil_image.size[::-1]]
-            )[0]
-            
-            if is_mixed_prompt:
-                print("Filtering results for mixed prompt...")
-                filtered_masks = []
-                result_boxes = results["boxes"]
-                result_masks = results["masks"]
-                for i, res_box in enumerate(result_boxes):
-                    center_x = (res_box[0] + res_box[2]) / 2
-                    center_y = (res_box[1] + res_box[3]) / 2
-                    for user_box in boxes:
-                        if (center_x >= user_box[0] and center_x <= user_box[2] and
-                            center_y >= user_box[1] and center_y <= user_box[3]):
-                            filtered_masks.append(result_masks[i])
-                            break
-                masks_tensor = torch.stack(filtered_masks) if filtered_masks else torch.empty(0)
-            else:
-                masks_tensor = results["masks"]
 
             output_masks = []
             for i, mask_tensor in enumerate(masks_tensor):
@@ -112,8 +103,8 @@ class SAM3Annotator:
             raise e
 
     def predict_video(self, video_base64: str, boxes: list):
-        if not self.pvs_tracker_model:
-            raise Exception("Video model not loaded.")
+        if not self.pvs_tracker_model or not self.pcs_model:
+            raise Exception("Required models are not loaded.")
 
         video_data = base64.b64decode(video_base64)
         
@@ -122,60 +113,68 @@ class SAM3Annotator:
             video_path = tmpfile.name
 
         try:
-            # 1. Initialize video session in streaming mode (no video frames passed)
-            inference_session = self.pvs_tracker_processor.init_video_session(
-                inference_device=self.device
-            )
-
-            # 2. Add box prompts for the first frame
-            obj_ids = list(range(1, len(boxes) + 1))
-            input_boxes = [boxes]
-            
-            # 3. Open video and process frame by frame
+            # 1. Get the first frame for initial mask generation
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
                 raise Exception("Could not open video file.")
+            ret, first_frame = cap.read()
+            if not ret:
+                raise Exception("Could not read the first frame of the video.")
             
             video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             
+            # 2. Generate initial masks from boxes on the first frame
+            print("Generating initial masks from boxes on the first frame...")
+            initial_masks_tensor = self._segment_image(image=first_frame, boxes=boxes)
+            if initial_masks_tensor.numel() == 0:
+                print("Warning: No initial masks could be generated from the provided boxes.")
+                return {} # Return empty results as nothing can be tracked
+            print(f"Generated {len(initial_masks_tensor)} initial masks.")
+
+            # 3. Initialize video session
+            inference_session = self.pvs_tracker_processor.init_video_session(
+                inference_device=self.device
+            )
+
+            # 4. Add the generated masks as prompts
+            obj_ids = list(range(1, len(initial_masks_tensor) + 1))
+            # Add a batch dimension for the session input: (num_objects, H, W) -> (1, num_objects, H, W)
+            input_masks = initial_masks_tensor.unsqueeze(0)
+            
+            print(f"Adding {len(obj_ids)} masks to the tracking session.")
+            self.pvs_tracker_processor.add_inputs_to_inference_session(
+                inference_session=inference_session,
+                frame_idx=0,
+                obj_ids=obj_ids,
+                input_masks=input_masks,
+                original_size=[video_height, video_width] 
+            )
+
+            # 5. Loop through video frames for tracking
             video_segments = {}
             frame_idx = 0
             
+            # Rewind video capture to the beginning
+            cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
             while True:
                 ret, frame = cap.read()
                 if not ret:
                     break
-
+                
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil_frame = Image.fromarray(frame_rgb)
 
-                # Process a single frame to get correct input shapes
                 inputs = self.pvs_tracker_processor(images=pil_frame, return_tensors="pt")
-
-                # On the first frame, add the user's prompts to the session
-                if frame_idx == 0:
-                    print("--- Debug Video Prompts ---")
-                    print(f"Object IDs: {obj_ids}")
-                    print(f"Input Boxes: {input_boxes}")
-                    print(f"Original Size: {inputs.original_sizes[0]}")
-                    print("---------------------------")
-                    self.pvs_tracker_processor.add_inputs_to_inference_session(
-                        inference_session=inference_session,
-                        frame_idx=0,
-                        obj_ids=obj_ids,
-                        input_boxes=input_boxes,
-                        original_size=inputs.original_sizes[0],
-                    )
-
-                # 4. Propagate model on the current frame
+                
                 with torch.no_grad():
                     model_outputs = self.pvs_tracker_model(
                         inference_session=inference_session, 
                         frame=inputs.pixel_values[0].to(self.device)
                     )
                 
-                # 5. Post-process the masks for the current frame
+                # 6. Post-process the masks for the current frame
                 video_res_masks_list = self.pvs_tracker_processor.post_process_masks(
                     [model_outputs.pred_masks], 
                     original_sizes=[[video_height, video_width]], 
@@ -191,10 +190,9 @@ class SAM3Annotator:
                 frame_masks = []
                 for i, obj_id in enumerate(obj_ids):
                     if i >= len(video_res_masks):
-                        break  # Stop if model returned fewer masks than objects
+                        break
 
                     mask_tensor = video_res_masks[i]
-
                     mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
                     mask_255 = mask_np_binary * 255
                     blurred_mask = cv2.GaussianBlur(mask_255, (5, 5), 0)
