@@ -164,13 +164,15 @@ class SAM3Annotator:
                     )
 
                 # 4. Propagate model on the current frame
-                with torch.no_grad():
-                    model_outputs = self.pvs_tracker_model(
-                        inference_session=inference_session, 
-                        frame=inputs.pixel_values[0].to(self.device),
-                        multimask_output=False
-                    )
-                
+                                with torch.no_grad():
+                                    model_outputs = self.pvs_tracker_model(
+                                        inference_session=inference_session,
+                                        frame=inputs.pixel_values[0].to(self.device),
+                                        multimask_output=False
+                                    )
+                                print(f"model_outputs.pred_masks shape: {model_outputs.pred_masks.shape if model_outputs.pred_masks is not None else 'None'}")
+                                if model_outputs.pred_masks is not None and model_outputs.pred_masks.numel() > 0:
+                                    print(f"model_outputs.pred_masks min: {model_outputs.pred_masks.min().item()}, max: {model_outputs.pred_masks.max().item()}, mean: {model_outputs.pred_masks.mean().item()}")                
                 # 5. Post-process the masks for the current frame
                 video_res_masks_list = self.pvs_tracker_processor.post_process_masks(
                     [model_outputs.pred_masks], 
