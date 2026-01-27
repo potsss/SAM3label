@@ -27,7 +27,7 @@ class SAM3Annotator:
 
             # Load Video (PVS Tracker) Model
             print("Loading SAM3 PVS Tracker Model (for videos) from local path...")
-            self.pvs_tracker_model = Sam3TrackerVideoModel.from_pretrained(model_path).to(self.device, dtype=torch.float16)
+            self.pvs_tracker_model = Sam3TrackerVideoModel.from_pretrained(model_path).to(self.device, )
             self.pvs_tracker_processor = Sam3TrackerVideoProcessor.from_pretrained(model_path)
             print("PVS Tracker Model and Processor loaded successfully.")
 
@@ -125,7 +125,7 @@ class SAM3Annotator:
             # 1. Initialize video session in streaming mode (no video frames passed)
             inference_session = self.pvs_tracker_processor.init_video_session(
                 inference_device=self.device,
-                dtype=torch.float16,
+                ,
             )
 
             # 2. Add point prompts for the first frame
@@ -170,7 +170,7 @@ class SAM3Annotator:
                 with torch.no_grad():
                     model_outputs = self.pvs_tracker_model(
                         inference_session=inference_session, 
-                        frame=inputs.pixel_values[0].to(self.device, dtype=torch.float16)
+                        frame=inputs.pixel_values[0].to(self.device, )
                     )
                 
                 # 5. Post-process the masks for the current frame
