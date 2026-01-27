@@ -29,7 +29,7 @@ class PointPrompt(BaseModel):
 
 class VideoAnnotationRequest(BaseModel):
     video_base64: str = Field(..., description="Base64 encoded video file.")
-    points: List[PointPrompt] = Field(..., description="List of initial point prompts on the first frame.")
+    boxes: List[BoxPrompt] = Field(..., description="List of initial box prompts on the first frame.")
 
 class VideoAnnotationResponse(BaseModel):
     # The keys will be frame numbers as strings, e.g., "0", "1", "2"...

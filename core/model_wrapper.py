@@ -111,7 +111,7 @@ class SAM3Annotator:
             print(f"Error during SAM3 inference: {e}")
             raise e
 
-    def predict_video(self, video_base64: str, points: list, labels: list):
+    def predict_video(self, video_base64: str, boxes: list):
         if not self.pvs_tracker_model:
             raise Exception("Video model not loaded.")
 
@@ -127,10 +127,10 @@ class SAM3Annotator:
                 inference_device=self.device
             )
 
-            # 2. Add point prompts for the first frame
-            obj_ids = list(range(1, len(points) + 1))
-            input_points = np.array(points).reshape(1, len(points), 1, 2).tolist()
-            input_labels = [[[l] for l in labels]]
+            # 2. Add box prompts for the first frame
+            obj_ids = list(range(1, len(boxes) + 1))
+            input_boxes = [boxes]
+            input_boxes_labels = [[1] * len(boxes)]
             
             # 3. Open video and process frame by frame
             cap = cv2.VideoCapture(video_path)
@@ -160,8 +160,8 @@ class SAM3Annotator:
                         inference_session=inference_session,
                         frame_idx=0,
                         obj_ids=obj_ids,
-                        input_points=input_points,
-                        input_labels=input_labels,
+                        input_boxes=input_boxes,
+                        input_boxes_labels=input_boxes_labels,
                         original_size=inputs.original_sizes[0],
                     )
 

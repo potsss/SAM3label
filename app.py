@@ -1,6 +1,5 @@
 import os
 import traceback
-import traceback
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from schemas.api import AnnotationRequest, AnnotationResponse, MaskResult, VideoAnnotationRequest, VideoAnnotationResponse
@@ -74,22 +73,19 @@ async def health_check():
 @app.post("/predict_video", response_model=VideoAnnotationResponse)
 async def predict_video(request: VideoAnnotationRequest):
     # 1. Prepare Prompts from the request
-    points = []
-    labels = []
-    if request.points:
-        for p in request.points:
-            points.append(p.point)
-            labels.append(p.label)
+    boxes = []
+    if request.boxes:
+        for b in request.boxes:
+            boxes.append(b.box)
     
-    if not points:
-        raise HTTPException(status_code=400, detail="Initial point prompts are required for video tracking.")
+    if not boxes:
+        raise HTTPException(status_code=400, detail="Initial box prompts are required for video tracking.")
 
     # 2. Inference
     try:
         frame_results = annotator.predict_video(
             video_base64=request.video_base64,
-            points=points,
-            labels=labels
+            boxes=boxes,
         )
     except Exception as e:
         tb_str = traceback.format_exc()
