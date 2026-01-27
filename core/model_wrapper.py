@@ -155,6 +155,11 @@ class SAM3Annotator:
 
                 # On the first frame, add the user's prompts to the session
                 if frame_idx == 0:
+                    print("--- Debug Video Prompts ---")
+                    print(f"Object IDs: {obj_ids}")
+                    print(f"Input Boxes: {input_boxes}")
+                    print(f"Original Size: {inputs.original_sizes[0]}")
+                    print("---------------------------")
                     self.pvs_tracker_processor.add_inputs_to_inference_session(
                         inference_session=inference_session,
                         frame_idx=0,
