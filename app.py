@@ -92,6 +92,20 @@ async def predict_video(request: VideoAnnotationRequest):
         tb_str = traceback.format_exc()
         raise HTTPException(status_code=500, detail=f"Video inference error: {str(e)}\n\nTraceback:\n{tb_str}")
 
+    # --- DEBUG: Save the first frame to a file ---
+    if "0" in frame_results:
+        try:
+            print("[DEBUG] Saving frame 0 to debug_frame_0.jpg")
+            # The string is "data:image/jpeg;base64,..." - we need to split it
+            header, b64_str = frame_results["0"].split(",", 1)
+            img_data = base64.b64decode(b64_str)
+            with open("debug_frame_0.jpg", "wb") as f:
+                f.write(img_data)
+            print("[DEBUG] Successfully saved debug_frame_0.jpg")
+        except Exception as e:
+            print(f"[DEBUG] FAILED to save debug frame: {e}")
+    # --- END DEBUG ---
+
     # 4. Format Response
     return VideoAnnotationResponse(frames=frame_results)
 
