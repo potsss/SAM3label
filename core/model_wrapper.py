@@ -167,7 +167,8 @@ class SAM3Annotator:
                 with torch.no_grad():
                     model_outputs = self.pvs_tracker_model(
                         inference_session=inference_session, 
-                        frame=inputs.pixel_values[0].to(self.device)
+                        frame=inputs.pixel_values[0].to(self.device),
+                        multimask_output=False
                     )
                 
                 # 5. Post-process the masks for the current frame
