@@ -191,6 +191,7 @@ class SAM3Annotator:
 
                 frame_masks = []
                 for i, obj_id in enumerate(obj_ids):
+                    print(f"Loop: i={i}, len(obj_ids)={len(obj_ids)}, len(video_res_masks)={len(video_res_masks)}")
                     if i >= len(video_res_masks):
                         break  # Stop if model returned fewer masks than objects
 
