@@ -185,24 +185,42 @@ class SAM3Annotator:
                     video_res_masks = video_res_masks_list[0].squeeze(1)
                     print(f"[DEBUG] Found {video_res_masks.shape[0]} masks for frame {frame_idx}.")
                     
-                    combined_overlay = Image.new("RGBA", final_frame_pil.size, (0, 0, 0, 0))
+                    # Convert masks to numpy with proper scaling (0-1 to 0-255)
+                    masks_np = (video_res_masks.cpu().numpy() * 255).astype(np.uint8)
+                    
+                    # Create overlay on RGBA image
+                    overlay = Image.new("RGBA", final_frame_pil.size, (0, 0, 0, 0))
+                    
+                    # Define colors for each object
+                    n_masks = masks_np.shape[0]
+                    colors = [
+                        ((i * 60) % 256, (255 - (i * 60) % 256), ((i * 60 + 128) % 256))
+                        for i in range(n_masks)
+                    ]
 
                     for i, obj_id in enumerate(obj_ids):
-                        if i >= video_res_masks.shape[0]:
+                        if i >= masks_np.shape[0]:
                             print(f"[DEBUG] Warning: Model returned fewer masks than tracked objects. Stopping at mask {i}.")
                             break
 
-                        mask_tensor = video_res_masks[i]
-                        mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
+                        mask_np = masks_np[i]
+                        color = colors[i]
                         
-                        color_val = (i * 60) % 256
-                        color = (color_val, 255 - color_val, (color_val + 128) % 256, 150)
+                        # Create mask image (L mode - grayscale)
+                        mask_img = Image.fromarray(mask_np, mode='L')
                         
-                        mask_for_drawing = Image.fromarray(mask_np_binary * 255, 'L')
-                        combined_overlay.paste(color, (0,0), mask_for_drawing)
-
-                    final_frame_pil = Image.alpha_composite(final_frame_pil, combined_overlay)
-                    print(f"[DEBUG] Successfully composited masks onto frame {frame_idx}.")
+                        # Create colored overlay with proper alpha
+                        mask_overlay = Image.new("RGBA", final_frame_pil.size, color + (0,))
+                        # Set alpha based on mask values (0.5 transparency for masked areas)
+                        alpha = mask_img.point(lambda v: int(v * 0.5))
+                        mask_overlay.putalpha(alpha)
+                        
+                        # Composite onto overlay
+                        overlay = Image.alpha_composite(overlay, mask_overlay)
+                    
+                    # Composite overlay onto final frame
+                    final_frame_pil = Image.alpha_composite(final_frame_pil, overlay)
+                    print(f"[DEBUG] Successfully composited {masks_np.shape[0]} masks onto frame {frame_idx}.")
                 else:
                     print(f"[DEBUG] No masks found for frame {frame_idx}. Frame will be unannotated.")
 
