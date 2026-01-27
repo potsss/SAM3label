@@ -192,6 +192,7 @@ class SAM3Annotator:
                     mask_tensor = video_res_masks[i]
 
                     mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
+                    print(f"mask_np_binary sum for obj {obj_id}: {np.sum(mask_np_binary)}")
                     mask_255 = mask_np_binary * 255
                     blurred_mask = cv2.GaussianBlur(mask_255, (5, 5), 0)
                     
@@ -205,6 +206,9 @@ class SAM3Annotator:
                     buffer = io.BytesIO()
                     mask_img.save(buffer, format="PNG")
                     b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+                    if frame_idx == 0:
+                        print(f"Frame 0, Object {obj_id}: b64_str length = {len(b64_str)}, prefix = {b64_str[:50]}...")
 
                     frame_masks.append({
                         "label": f"object_{obj_id}",
