@@ -192,9 +192,11 @@ class SAM3Annotator:
                     # DEBUG: Check mask values
                     print(f"[DEBUG] Mask stats - Min: {masks_np.min()}, Max: {masks_np.max()}, Mean: {masks_np.mean():.2f}")
                     print(f"[DEBUG] Mask shape: {masks_np.shape}")
+                    print(f"[DEBUG] obj_ids: {obj_ids}, obj_ids length: {len(obj_ids)}")
                     
-                    # Create a copy of the frame to work with (in BGR for OpenCV operations, then convert)
-                    frame_cv = cv2.cvtColor(np.array(pil_frame), cv2.COLOR_RGB2BGR)
+                    # Create a copy of the frame to work with (in BGR for OpenCV operations)
+                    frame_cv = cv2.cvtColor(np.array(pil_frame_rgb), cv2.COLOR_RGB2BGR)
+                    print(f"[DEBUG] Frame shape: {frame_cv.shape}, dtype: {frame_cv.dtype}")
                     
                     # Define colors for each object (BGR format for OpenCV)
                     n_masks = masks_np.shape[0]
@@ -202,8 +204,11 @@ class SAM3Annotator:
                         ((i * 60) % 256, (255 - (i * 60) % 256), ((i * 60 + 128) % 256))
                         for i in range(n_masks)
                     ]
+                    print(f"[DEBUG] Number of masks: {n_masks}, colors: {colors_bgr}")
 
+                    composited_count = 0
                     for i, obj_id in enumerate(obj_ids):
+                        print(f"[DEBUG] Loop iteration {i}, obj_id: {obj_id}")
                         if i >= masks_np.shape[0]:
                             print(f"[DEBUG] Warning: Model returned fewer masks than tracked objects. Stopping at mask {i}.")
                             break
@@ -211,27 +216,33 @@ class SAM3Annotator:
                         mask_np = masks_np[i]
                         color_bgr = colors_bgr[i]
                         
-                        print(f"[DEBUG] Processing mask {i}: color={color_bgr}, mask_min={mask_np.min()}, mask_max={mask_np.max()}")
+                        print(f"[DEBUG] Processing mask {i}: color={color_bgr}, shape={mask_np.shape}, min={mask_np.min()}, max={mask_np.max()}")
                         
                         # Create a colored overlay for this mask
                         colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
                         colored_overlay[:, :] = color_bgr
+                        print(f"[DEBUG] Created colored overlay with shape: {colored_overlay.shape}")
                         
                         # Use mask as alpha: where mask is high, show color; where mask is low, show original
-                        # Normalize mask to 0-1 for alpha blending
-                        alpha = mask_np.astype(float) / 255.0 * 0.5  # 50% transparency
+                        # Normalize mask to 0-1 for alpha blending (use full transparency, not 0.5)
+                        alpha = mask_np.astype(float) / 255.0  # Full transparency based on mask
+                        print(f"[DEBUG] Alpha channel - min: {alpha.min():.3f}, max: {alpha.max():.3f}, mean: {alpha.mean():.3f}")
                         
+                        # Blend each channel
                         for c in range(3):  # For each channel (BGR)
                             frame_cv[:, :, c] = (
                                 frame_cv[:, :, c] * (1 - alpha) + 
                                 colored_overlay[:, :, c] * alpha
                             ).astype(np.uint8)
+                        
+                        composited_count += 1
+                        print(f"[DEBUG] ✓ Successfully blended mask {i}")
                     
                     # Convert back to RGB for PIL
                     frame_cv_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
                     final_frame_pil = Image.fromarray(frame_cv_rgb, 'RGB')
                     
-                    print(f"[DEBUG] Successfully composited {masks_np.shape[0]} masks onto frame {frame_idx}.")
+                    print(f"[DEBUG] ✓ Successfully composited {composited_count} masks onto frame {frame_idx}.")
                 else:
                     print(f"[DEBUG] No masks found for frame {frame_idx}. Frame will be unannotated.")
 
