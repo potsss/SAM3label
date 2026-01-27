@@ -179,7 +179,8 @@ class SAM3Annotator:
                     binarize=False
                 )
 
-                final_frame_pil = pil_frame.convert("RGBA")
+                # Don't convert to RGBA here, we'll handle it with OpenCV
+                pil_frame_rgb = pil_frame  # Keep as RGB for now
 
                 if video_res_masks_list:
                     video_res_masks = video_res_masks_list[0].squeeze(1)
@@ -188,12 +189,16 @@ class SAM3Annotator:
                     # Convert masks to numpy with proper scaling (0-1 to 0-255)
                     masks_np = (video_res_masks.cpu().numpy() * 255).astype(np.uint8)
                     
-                    # Create overlay on RGBA image
-                    overlay = Image.new("RGBA", final_frame_pil.size, (0, 0, 0, 0))
+                    # DEBUG: Check mask values
+                    print(f"[DEBUG] Mask stats - Min: {masks_np.min()}, Max: {masks_np.max()}, Mean: {masks_np.mean():.2f}")
+                    print(f"[DEBUG] Mask shape: {masks_np.shape}")
                     
-                    # Define colors for each object
+                    # Create a copy of the frame to work with (in BGR for OpenCV operations, then convert)
+                    frame_cv = cv2.cvtColor(np.array(pil_frame), cv2.COLOR_RGB2BGR)
+                    
+                    # Define colors for each object (BGR format for OpenCV)
                     n_masks = masks_np.shape[0]
-                    colors = [
+                    colors_bgr = [
                         ((i * 60) % 256, (255 - (i * 60) % 256), ((i * 60 + 128) % 256))
                         for i in range(n_masks)
                     ]
@@ -204,22 +209,28 @@ class SAM3Annotator:
                             break
 
                         mask_np = masks_np[i]
-                        color = colors[i]
+                        color_bgr = colors_bgr[i]
                         
-                        # Create mask image (L mode - grayscale)
-                        mask_img = Image.fromarray(mask_np, mode='L')
+                        print(f"[DEBUG] Processing mask {i}: color={color_bgr}, mask_min={mask_np.min()}, mask_max={mask_np.max()}")
                         
-                        # Create colored overlay with proper alpha
-                        mask_overlay = Image.new("RGBA", final_frame_pil.size, color + (0,))
-                        # Set alpha based on mask values (0.5 transparency for masked areas)
-                        alpha = mask_img.point(lambda v: int(v * 0.5))
-                        mask_overlay.putalpha(alpha)
+                        # Create a colored overlay for this mask
+                        colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
+                        colored_overlay[:, :] = color_bgr
                         
-                        # Composite onto overlay
-                        overlay = Image.alpha_composite(overlay, mask_overlay)
+                        # Use mask as alpha: where mask is high, show color; where mask is low, show original
+                        # Normalize mask to 0-1 for alpha blending
+                        alpha = mask_np.astype(float) / 255.0 * 0.5  # 50% transparency
+                        
+                        for c in range(3):  # For each channel (BGR)
+                            frame_cv[:, :, c] = (
+                                frame_cv[:, :, c] * (1 - alpha) + 
+                                colored_overlay[:, :, c] * alpha
+                            ).astype(np.uint8)
                     
-                    # Composite overlay onto final frame
-                    final_frame_pil = Image.alpha_composite(final_frame_pil, overlay)
+                    # Convert back to RGB for PIL
+                    frame_cv_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
+                    final_frame_pil = Image.fromarray(frame_cv_rgb, 'RGB')
+                    
                     print(f"[DEBUG] Successfully composited {masks_np.shape[0]} masks onto frame {frame_idx}.")
                 else:
                     print(f"[DEBUG] No masks found for frame {frame_idx}. Frame will be unannotated.")
