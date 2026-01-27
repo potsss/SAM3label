@@ -129,6 +129,7 @@ class SAM3Annotator:
 
             # 2. Add box prompts for the first frame
             obj_ids = list(range(1, len(boxes) + 1))
+            print(f"obj_ids length: {len(obj_ids)}")
             input_boxes = np.array(boxes).reshape(1, len(boxes), 4).tolist()
             
             # 3. Open video and process frame by frame
@@ -186,7 +187,7 @@ class SAM3Annotator:
                     continue
                 
                 video_res_masks = video_res_masks_list[0].squeeze(1)
-                print(f"video_res_masks shape: {video_res_masks.shape if video_res_masks is not None else 'None'}")
+                print(f"video_res_masks actual num_masks: {video_res_masks.shape[0] if video_res_masks is not None else 'None'}, full shape: {video_res_masks.shape if video_res_masks is not None else 'None'}")
 
                 frame_masks = []
                 for i, obj_id in enumerate(obj_ids):
