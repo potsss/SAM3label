@@ -372,68 +372,87 @@ class SAM3Annotator:
                 text=text_prompt,
             )
             
+            # Key optimization: Track memory and clear periodically
+            MEMORY_CLEAR_INTERVAL = 10  # Clear GPU memory every N frames
+
             annotated_frames = {}
-            
+
             # Process video frames with text-based concept propagation
             print("[TEXT-TRACK] Processing frames with text concept tracking...")
             for model_outputs in self.video_pcs_model.propagate_in_video_iterator(
                 inference_session=inference_session, max_frame_num_to_track=len(video_frames)
             ):
                 frame_idx = model_outputs.frame_idx
-                
+
                 # Post-process outputs
                 processed_outputs = self.video_pcs_processor.postprocess_outputs(
                     inference_session, model_outputs
                 )
-                
+
                 if frame_idx < len(video_frames):
                     frame_bgr, pil_frame = video_frames[frame_idx]
                     frame_cv = frame_bgr.copy()
-                    
+
                     # Apply masks to frame
                     if "masks" in processed_outputs and len(processed_outputs["masks"]) > 0:
                         masks = processed_outputs["masks"]
-                        
+
                         print(f"[TEXT-TRACK] Frame {frame_idx}: Detected {len(masks)} matching objects")
-                        
+
                         # Apply each mask with overlay
                         for mask_idx, mask in enumerate(masks):
                             mask_np = mask.to(torch.float32).cpu().numpy() if torch.is_tensor(mask) else mask
                             mask_binary = (mask_np > 0.5).astype(np.uint8)
-                            
+
                             # Use different colors for different detections
                             color_bgr = (
                                 int((mask_idx * 60) % 256),
                                 int((255 - (mask_idx * 60) % 256)),
                                 int(((mask_idx * 60 + 128) % 256))
                             )
-                            
+
                             colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
                             colored_overlay[:, :] = color_bgr
-                            
+
                             alpha = mask_binary.astype(float) * 0.5
-                            
+
                             for c in range(3):
                                 frame_cv[:, :, c] = (
-                                    frame_cv[:, :, c] * (1 - alpha) + 
+                                    frame_cv[:, :, c] * (1 - alpha) +
                                     colored_overlay[:, :, c] * alpha
                                 ).astype(np.uint8)
-                    
+
                     # Encode frame to base64
                     frame_cv_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
                     final_frame_pil = Image.fromarray(frame_cv_rgb, 'RGB')
-                    
+
                     buffer = io.BytesIO()
                     final_frame_pil.convert("RGB").save(buffer, format="JPEG", quality=90)
                     b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
-                    
+
                     annotated_frames[str(frame_idx)] = f"data:image/jpeg;base64,{b64_str}"
-                    
-                    # Periodic memory cleanup
-                    if frame_idx > 0 and frame_idx % 5 == 0:
+
+                    # Key optimization: Periodic memory cleanup
+                    if frame_idx > 0 and frame_idx % MEMORY_CLEAR_INTERVAL == 0:
+                        print(f"[TEXT-TRACK] Clearing GPU memory at frame {frame_idx}...")
+
+                        # Clear PyTorch GPU cache
                         if self.device == "cuda":
                             torch.cuda.empty_cache()
+
+                        # Explicit garbage collection
                         gc.collect()
+
+                        if self.device == "cuda":
+                            print(f"[TEXT-TRACK] GPU memory after cleanup: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+
+                # Clear intermediate tensors to free memory
+                del model_outputs, processed_outputs
+
+                if 'mask_np' in locals():
+                    del mask_np
+                if 'mask_binary' in locals():
+                    del mask_binary
             
             print(f"[TEXT-TRACK] Finished processing. Total frames: {len(annotated_frames)}")
             
