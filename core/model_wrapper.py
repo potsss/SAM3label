@@ -288,122 +288,22 @@ class SAM3Annotator:
                 torch.cuda.empty_cache()
             gc.collect()
     
-    def predict_auto_image(self, image: np.ndarray):
+    def predict_video_with_text(self, video_base64: str, text_prompt: str):
         """
-        Automatically generate masks for all objects in an image without any prompts.
-        Uses a grid-based point sampling approach with SAM3 Tracker model.
-        
-        Args:
-            image: Input image as numpy array (BGR format)
-            
-        Returns:
-            List of dictionaries with mask_base64 for each detected object
-        """
-        # Note: SAM3 PCS model only supports text and box prompts, not point prompts.
-        # For automatic grid-based point sampling, we use Sam3Tracker model instead.
-        # However, Sam3Tracker is designed for single-object interactive segmentation.
-        # For now, we'll use a text-based approach with a generic "object" prompt
-        # to detect all objects in the image.
-        
-        if not self.pcs_model:
-            raise Exception("PCS model not loaded.")
-        
-        print("\n[AUTO] Starting automatic mask generation for image...")
-        print("[AUTO] Using PCS model with text-based detection...")
-        
-        pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-        
-        try:
-            # Use a generic text prompt to detect all objects
-            # SAM3 PCS model will find all instances matching this concept
-            generic_prompts = ["object", "thing", "item"]
-            all_masks = []
-            detected_mask_hashes = set()
-            
-            for prompt_text in generic_prompts:
-                print(f"[AUTO] Attempting detection with text prompt: '{prompt_text}'...")
-                
-                try:
-                    # Process with PCS model using text prompt
-                    inputs = self.pcs_processor(
-                        images=pil_image,
-                        text=prompt_text,
-                        return_tensors="pt"
-                    ).to(self.device)
-                    
-                    with torch.no_grad():
-                        outputs = self.pcs_model(**inputs)
-                    
-                    results = self.pcs_processor.post_process_instance_segmentation(
-                        outputs, threshold=0.5, mask_threshold=0.5,
-                        target_sizes=[pil_image.size[::-1]]
-                    )[0]
-                    
-                    if "masks" in results and len(results["masks"]) > 0:
-                        masks_found = len(results["masks"])
-                        print(f"[AUTO] Found {masks_found} masks with prompt '{prompt_text}'")
-                        
-                        # De-duplicate masks using hash
-                        for mask_tensor in results["masks"]:
-                            mask_np = mask_tensor.cpu().numpy()
-                            # Create hash from mask to detect duplicates across prompts
-                            mask_hash = hash(tuple(mask_np.flatten()[:100]))
-                            
-                            if mask_hash not in detected_mask_hashes:
-                                detected_mask_hashes.add(mask_hash)
-                                all_masks.append(mask_tensor)
-                
-                except Exception as e:
-                    print(f"[AUTO] Text prompt '{prompt_text}' failed: {str(e)[:80]}")
-                    continue
-            
-            print(f"[AUTO] Detected {len(all_masks)} unique masks")
-            
-            output_masks = []
-            for i, mask_tensor in enumerate(all_masks):
-                mask_np = mask_tensor.cpu().numpy()
-                mask_binary = (mask_np > 0.5).astype(np.uint8) * 255
-                
-                # Create RGBA mask image
-                colored_mask = np.zeros((mask_binary.shape[-2], mask_binary.shape[-1], 4), dtype=np.uint8)
-                color = np.array([0, 255, 255])  # Yellow for auto-detected objects
-                
-                mask_2d = mask_binary[0] if mask_binary.ndim == 3 else mask_binary
-                colored_mask[mask_2d > 0, :3] = color
-                colored_mask[:, :, 3] = mask_2d
-                
-                mask_img = Image.fromarray(colored_mask, 'RGBA')
-                buffer = io.BytesIO()
-                mask_img.save(buffer, format="PNG")
-                img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
-                
-                output_masks.append({
-                    "label": f"auto_object_{i}",
-                    "mask_base64": f"data:image/png;base64,{img_str}"
-                })
-            
-            print(f"[AUTO] Successfully generated {len(output_masks)} masks")
-            return output_masks
-            
-        except Exception as e:
-            print(f"Error during automatic mask generation: {e}")
-            raise e
-    
-    def predict_auto_video(self, video_base64: str):
-        """
-        Automatically generate and segment masks for all frames in a video.
-        Uses text-based prompts with SAM3 PCS model on each frame.
+        Process video with text prompt to detect and track specific objects.
+        Uses SAM3 PVS Tracker video model with text-based concept prompt.
         
         Args:
             video_base64: Base64 encoded video file
+            text_prompt: Text description of what to detect and track
             
         Returns:
             Dictionary with frame indices as keys and base64 annotated frames as values
         """
-        if not self.pcs_model:
-            raise Exception("PCS model not loaded.")
-        
-        print("\n[AUTO] Starting automatic video segmentation...")
+        if not self.pvs_tracker_model:
+            raise Exception("Video tracker model not loaded.")
+
+        print(f"\n[TEXT-TRACK] Starting video tracking with prompt: '{text_prompt}'")
         video_data = base64.b64decode(video_base64)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmpfile:
@@ -419,106 +319,102 @@ class SAM3Annotator:
             video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
             video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
             
-            print(f"[AUTO] Video info: {video_width}x{video_height}, Total frames: {total_frames}")
+            print(f"[TEXT-TRACK] Video info: {video_width}x{video_height}, Total frames: {total_frames}")
             
-            annotated_frames = {}
-            frame_idx = 0
-            MEMORY_CLEAR_INTERVAL = 5  # Clear GPU memory every N frames
-            generic_prompts = ["object"]  # Use simpler prompts for video (faster)
-            
+            # Load all frames (for text-based tracking, all frames are used for concept propagation)
+            print("[TEXT-TRACK] Loading all frames into memory...")
+            video_frames = []
             while True:
                 ret, frame = cap.read()
                 if not ret:
-                    print("[AUTO] End of video stream.")
                     break
-                
-                print(f"--- Processing frame {frame_idx}/{total_frames-1} ---")
-                
-                pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
-                frame_cv = frame.copy()
-                
-                # Collect masks from text prompts
-                all_masks = []
-                detected_mask_hashes = set()
-                
-                for prompt_text in generic_prompts:
-                    try:
-                        inputs = self.pcs_processor(
-                            images=pil_frame,
-                            text=prompt_text,
-                            return_tensors="pt"
-                        ).to(self.device)
-                        
-                        with torch.no_grad():
-                            outputs = self.pcs_model(**inputs)
-                        
-                        results = self.pcs_processor.post_process_instance_segmentation(
-                            outputs, threshold=0.5, mask_threshold=0.5,
-                            target_sizes=[pil_frame.size[::-1]]
-                        )[0]
-                        
-                        if "masks" in results and len(results["masks"]) > 0:
-                            for mask_tensor in results["masks"]:
-                                mask_np = mask_tensor.cpu().numpy()
-                                mask_hash = hash(tuple(mask_np.flatten()[:100]))
-                                
-                                if mask_hash not in detected_mask_hashes:
-                                    detected_mask_hashes.add(mask_hash)
-                                    all_masks.append(mask_tensor)
-                    except Exception as e:
-                        print(f"[AUTO] Text prompt '{prompt_text}' failed in frame {frame_idx}: {str(e)[:60]}")
-                        continue
-                
-                print(f"[AUTO] Found {len(all_masks)} masks in frame {frame_idx}")
-                
-                # Apply masks to frame with colors
-                if all_masks:
-                    n_masks = len(all_masks)
-                    colors_bgr = [
-                        ((i * 60) % 256, (255 - (i * 60) % 256), ((i * 60 + 128) % 256))
-                        for i in range(n_masks)
-                    ]
-                    
-                    for i, mask_tensor in enumerate(all_masks):
-                        mask_np = mask_tensor.cpu().numpy()
-                        mask_binary = (mask_np > 0.5).astype(np.uint8) * 255
-                        mask_2d = mask_binary[0] if mask_binary.ndim == 3 else mask_binary
-                        
-                        color_bgr = colors_bgr[i]
-                        colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
-                        colored_overlay[:, :] = color_bgr
-                        
-                        alpha = mask_2d.astype(float) / 255.0 * 0.6
-                        
-                        for c in range(3):
-                            frame_cv[:, :, c] = (
-                                frame_cv[:, :, c] * (1 - alpha) + 
-                                colored_overlay[:, :, c] * alpha
-                            ).astype(np.uint8)
-                
-                # Encode frame to base64
-                frame_cv_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
-                final_frame_pil = Image.fromarray(frame_cv_rgb, 'RGB')
-                
-                buffer = io.BytesIO()
-                final_frame_pil.convert("RGB").save(buffer, format="JPEG", quality=90)
-                b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
-                
-                annotated_frames[str(frame_idx)] = f"data:image/jpeg;base64,{b64_str}"
-                
-                # Periodic memory cleanup
-                if frame_idx > 0 and frame_idx % MEMORY_CLEAR_INTERVAL == 0:
-                    print(f"[AUTO] Clearing GPU memory at frame {frame_idx}...")
-                    
-                    if self.device == "cuda":
-                        torch.cuda.empty_cache()
-                    
-                    gc.collect()
-                
-                frame_idx += 1
-
+                # Convert BGR to RGB for SAM3
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_frame = Image.fromarray(frame_rgb)
+                video_frames.append((frame, pil_frame))  # Keep BGR for drawing, RGB PIL for SAM3
+            
             cap.release()
-            print(f"\n[AUTO] Finished processing. Total frames returned: {len(annotated_frames)}")
+            print(f"[TEXT-TRACK] Loaded {len(video_frames)} frames")
+            
+            # Initialize video session for text-based tracking
+            print("[TEXT-TRACK] Initializing PVS tracker video session...")
+            inference_session = self.pvs_tracker_processor.init_video_session(
+                inference_device=self.device,
+                dtype=torch.bfloat16 if self.device == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
+            )
+            
+            # Add text prompt for tracking the concept across video
+            print(f"[TEXT-TRACK] Adding text prompt: '{text_prompt}'")
+            inference_session = self.pvs_tracker_processor.add_text_prompt(
+                inference_session=inference_session,
+                text=text_prompt,
+            )
+            
+            annotated_frames = {}
+            
+            # Process video frames
+            print("[TEXT-TRACK] Processing frames with text concept tracking...")
+            for model_outputs in self.pvs_tracker_model.propagate_in_video_iterator(
+                inference_session=inference_session, max_frame_num_to_track=len(video_frames)
+            ):
+                frame_idx = model_outputs.frame_idx
+                
+                # Post-process outputs
+                processed_outputs = self.pvs_tracker_processor.postprocess_outputs(
+                    inference_session, model_outputs
+                )
+                
+                if frame_idx < len(video_frames):
+                    frame_bgr, pil_frame = video_frames[frame_idx]
+                    frame_cv = frame_bgr.copy()
+                    
+                    # Apply masks to frame
+                    if "masks" in processed_outputs and len(processed_outputs["masks"]) > 0:
+                        masks = processed_outputs["masks"]
+                        object_ids = processed_outputs.get("object_ids", list(range(len(masks))))
+                        
+                        print(f"[TEXT-TRACK] Frame {frame_idx}: Detected {len(masks)} objects")
+                        
+                        # Apply each mask with a different color
+                        for obj_idx, (mask, obj_id) in enumerate(zip(masks, object_ids)):
+                            mask_np = mask.cpu().numpy() if torch.is_tensor(mask) else mask
+                            mask_binary = (mask_np > 0.5).astype(np.uint8)
+                            
+                            # Use different colors for different objects
+                            color_bgr = (
+                                int((obj_id * 50) % 256),
+                                int((obj_id * 100) % 256),
+                                int((obj_id * 150) % 256)
+                            )
+                            
+                            colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
+                            colored_overlay[:, :] = color_bgr
+                            
+                            alpha = mask_binary.astype(float) * 0.5
+                            
+                            for c in range(3):
+                                frame_cv[:, :, c] = (
+                                    frame_cv[:, :, c] * (1 - alpha) + 
+                                    colored_overlay[:, :, c] * alpha
+                                ).astype(np.uint8)
+                    
+                    # Encode frame to base64
+                    frame_cv_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
+                    final_frame_pil = Image.fromarray(frame_cv_rgb, 'RGB')
+                    
+                    buffer = io.BytesIO()
+                    final_frame_pil.convert("RGB").save(buffer, format="JPEG", quality=90)
+                    b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                    
+                    annotated_frames[str(frame_idx)] = f"data:image/jpeg;base64,{b64_str}"
+                    
+                    # Periodic memory cleanup
+                    if frame_idx > 0 and frame_idx % 5 == 0:
+                        if self.device == "cuda":
+                            torch.cuda.empty_cache()
+                        gc.collect()
+            
+            print(f"[TEXT-TRACK] Finished processing. Total frames: {len(annotated_frames)}")
             
             # Final cleanup
             if self.device == "cuda":
@@ -529,13 +425,8 @@ class SAM3Annotator:
 
         finally:
             if os.path.exists(video_path):
-                print(f"[AUTO] Deleting temporary video file: {video_path}")
+                print(f"[TEXT-TRACK] Deleting temporary video file: {video_path}")
                 os.remove(video_path)
-            
-            # Ensure cleanup on error
-            if self.device == "cuda":
-                torch.cuda.empty_cache()
-            gc.collect()
             
             # Ensure cleanup on error
             if self.device == "cuda":

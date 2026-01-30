@@ -20,26 +20,13 @@
                 <h2>2️⃣ 加载图像</h2>
                 <input type="file" id="image-loader" accept="image/*">
                 
-                <h2>3️⃣ 标注模式</h2>
+                <h2>3️⃣ 添加提示词</h2>
                 <div class="prompt-buttons">
-                    <button id="manual-mode-btn" class="mode-toggle active">手动提示</button>
-                    <button id="auto-mode-btn" class="mode-toggle">自动标注</button>
+                    <button id="text-btn" class="prompt-btn">文字提示</button>
+                    <button id="box-btn" class="prompt-btn">框选提示</button>
                 </div>
-
-                <div id="manual-prompt-container">
-                    <h3>添加提示词（图像）</h3>
-                    <div class="prompt-buttons">
-                        <button id="text-btn" class="prompt-btn">文字提示</button>
-                        <button id="box-btn" class="prompt-btn">框选提示</button>
-                    </div>
-                    <div id="text-prompt-container" style="display:none;">
-                        <input type="text" id="text-prompt" placeholder="输入文字描述...">
-                    </div>
-                </div>
-
-                <div id="auto-prompt-container" style="display:none;">
-                    <h3>自动标注</h3>
-                    <p>✨ 模型将自动检测并分割图像中的所有物体，无需任何提示</p>
+                <div id="text-prompt-container" style="display:none;">
+                    <input type="text" id="text-prompt" placeholder="输入文字描述...">
                 </div>
 
                 <button id="submit-image-btn">🚀 开始标注</button>
@@ -49,20 +36,21 @@
                 <h2>2️⃣ 加载视频</h2>
                 <input type="file" id="video-loader" accept="video/*">
                 
-                <h2>3️⃣ 标注模式</h2>
+                <h2>3️⃣ 选择跟踪方式</h2>
                 <div class="prompt-buttons">
-                    <button id="video-manual-mode-btn" class="video-mode-toggle active">手动跟踪</button>
-                    <button id="video-auto-mode-btn" class="video-mode-toggle">自动标注</button>
+                    <button id="use-text-prompt-btn" class="video-track-btn active">使用文字描述</button>
+                    <button id="use-box-prompt-btn" class="video-track-btn">使用框选</button>
                 </div>
 
-                <div id="video-manual-prompt-container">
+                <div id="video-text-prompt-container">
+                    <h3>输入要跟踪的对象描述</h3>
+                    <input type="text" id="video-text-prompt" placeholder="例如：person, car, dog ...">
+                    <p>💡 提示：描述要在视频中检测和追踪的对象（如"人"、"狗"、"汽车"等）</p>
+                </div>
+
+                <div id="video-box-prompt-container" style="display:none;">
                     <h3>在第一帧添加框选提示</h3>
                     <p>在下方画布上点击并拖拽鼠标为要跟踪的对象绘制边界框。</p>
-                </div>
-
-                <div id="video-auto-prompt-container" style="display:none;">
-                    <h3>自动标注</h3>
-                    <p>✨ 模型将自动检测并分割视频中每帧的所有物体，无需任何提示</p>
                 </div>
 
                 <button id="track-video-btn">🎬 开始处理</button>

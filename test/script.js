@@ -22,12 +22,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const textPromptContainer = document.getElementById('text-prompt-container');
     const textPromptInput = document.getElementById('text-prompt');
     const submitImageBtn = document.getElementById('submit-image-btn');
-    
-    // --- Auto Mode Elements (Image) ---
-    const manualModeBtn = document.getElementById('manual-mode-btn');
-    const autoModeBtn = document.getElementById('auto-mode-btn');
-    const manualPromptContainer = document.getElementById('manual-prompt-container');
-    const autoPromptContainer = document.getElementById('auto-prompt-container');
 
     // --- Video Mode Elements ---
     const videoLoader = document.getElementById('video-loader');
@@ -36,17 +30,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const frameSlider = document.getElementById('frame-slider');
     const frameLabel = document.getElementById('frame-label');
     
-    // --- Auto Mode Elements (Video) ---
-    const videoManualModeBtn = document.getElementById('video-manual-mode-btn');
-    const videoAutoModeBtn = document.getElementById('video-auto-mode-btn');
-    const videoManualPromptContainer = document.getElementById('video-manual-prompt-container');
-    const videoAutoPromptContainer = document.getElementById('video-auto-prompt-container');
+    // --- Video Text Tracking Elements ---
+    const useTextPromptBtn = document.getElementById('use-text-prompt-btn');
+    const useBoxPromptBtn = document.getElementById('use-box-prompt-btn');
+    const videoTextPromptContainer = document.getElementById('video-text-prompt-container');
+    const videoBoxPromptContainer = document.getElementById('video-box-prompt-container');
+    const videoTextPromptInput = document.getElementById('video-text-prompt');
 
     // --- State ---
     let state = {
         globalMode: 'image', // 'image' or 'video'
-        imageAnnotationMode: 'manual', // 'manual' or 'auto'
-        videoAnnotationMode: 'manual', // 'manual' or 'auto'
         image: null,
         imgState: {
             modes: new Set(),
@@ -59,6 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
         videoURL: null,
         videoBase64: null,
         videoBoxes: [],
+        videoTextPrompt: '',
         annotatedFrames: {}, // Will store { "0": Image, "1": Image, ... }
         videoTotalFrames: 0,
         videoFPS: 30, // Assuming a fixed FPS, might need adjustment
@@ -74,112 +68,49 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // ===================================================================
-    // --- IMAGE ANNOTATION MODE TOGGLE ---
+    // --- MODE SWITCHING (Image vs Video) ---
     // ===================================================================
 
-    manualModeBtn.addEventListener('click', () => {
-        state.imageAnnotationMode = 'manual';
-        manualModeBtn.classList.add('active');
-        autoModeBtn.classList.remove('active');
-        manualPromptContainer.style.display = 'block';
-        autoPromptContainer.style.display = 'none';
-        console.log('[Mode] Switched to manual image annotation mode');
+    imageModeBtn.addEventListener('click', () => {
+        state.globalMode = 'image';
+        imageModeBtn.classList.add('active');
+        videoModeBtn.classList.remove('active');
+        imageControls.style.display = 'block';
+        videoControls.style.display = 'none';
+        videoPlayerContainer.style.display = 'none';
+        videoResultsContainer.style.display = 'none';
+        console.log('[Mode] Switched to image mode');
     });
 
-    autoModeBtn.addEventListener('click', () => {
-        state.imageAnnotationMode = 'auto';
-        autoModeBtn.classList.add('active');
-        manualModeBtn.classList.remove('active');
-        manualPromptContainer.style.display = 'none';
-        autoPromptContainer.style.display = 'block';
-        console.log('[Mode] Switched to auto image annotation mode');
+    videoModeBtn.addEventListener('click', () => {
+        state.globalMode = 'video';
+        videoModeBtn.classList.add('active');
+        imageModeBtn.classList.remove('active');
+        imageControls.style.display = 'none';
+        videoControls.style.display = 'block';
+        if (state.videoURL) videoPlayerContainer.style.display = 'block';
+        console.log('[Mode] Switched to video mode');
     });
 
     // ===================================================================
-    // --- VIDEO ANNOTATION MODE TOGGLE ---
+    // --- VIDEO TRACKING MODE TOGGLE (Text vs Box) ---
     // ===================================================================
 
-    videoManualModeBtn.addEventListener('click', () => {
-        state.videoAnnotationMode = 'manual';
-        videoManualModeBtn.classList.add('active');
-        videoAutoModeBtn.classList.remove('active');
-        videoManualPromptContainer.style.display = 'block';
-        videoAutoPromptContainer.style.display = 'none';
-        console.log('[Mode] Switched to manual video annotation mode');
+    useTextPromptBtn.addEventListener('click', () => {
+        useTextPromptBtn.classList.add('active');
+        useBoxPromptBtn.classList.remove('active');
+        videoTextPromptContainer.style.display = 'block';
+        videoBoxPromptContainer.style.display = 'none';
+        console.log('[Video Mode] Switched to text prompt tracking');
     });
 
-    videoAutoModeBtn.addEventListener('click', () => {
-        state.videoAnnotationMode = 'auto';
-        videoAutoModeBtn.classList.add('active');
-        videoManualModeBtn.classList.remove('active');
-        videoManualPromptContainer.style.display = 'none';
-        videoAutoPromptContainer.style.display = 'block';
-        console.log('[Mode] Switched to auto video annotation mode');
+    useBoxPromptBtn.addEventListener('click', () => {
+        useBoxPromptBtn.classList.add('active');
+        useTextPromptBtn.classList.remove('active');
+        videoTextPromptContainer.style.display = 'none';
+        videoBoxPromptContainer.style.display = 'block';
+        console.log('[Video Mode] Switched to box prompt tracking');
     });
-
-    clearBtn.addEventListener('click', () => {
-        // 只清除标注结果，保留已加载的图片/视频
-        if (state.globalMode === 'image') {
-            // 图像模式：清除标注结果但保留加载的图片
-            state.imgState = {
-                modes: new Set(),
-                boxes: [],
-                isDrawing: false,
-                startPoint: null,
-                currentBox: null,
-                resultMasks: []  // 清除标注结果
-            };
-            textPromptInput.value = '';
-            
-            // 重新绘制原始图片（无标注）
-            if (state.image) {
-                redrawImageCanvas();
-                console.log('[Clear] Image annotations cleared, original image displayed');
-            }
-        } else {
-            // 视频模式：清除标注结果但保留加载的视频
-            state.videoBoxes = [];
-            state.annotatedFrames = {};
-            state.videoTotalFrames = 0;
-            videoResultsContainer.style.display = 'none';
-            
-            // 清除canvas
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            console.log('[Clear] Video annotations cleared');
-        }
-    });
-
-    saveBtn.addEventListener('click', () => {
-        if (!state.image && Object.keys(state.annotatedFrames).length === 0) {
-            alert('No image or video frame to save.');
-            return;
-        }
-        const link = document.createElement('a');
-        link.download = `annotated_${state.globalMode}_frame.png`;
-        link.href = canvas.toDataURL('image/png');
-        link.click();
-    });
-
-    function switchGlobalMode(mode) {
-        state.globalMode = mode;
-        if (mode === 'image') {
-            imageModeBtn.classList.add('active');
-            videoModeBtn.classList.remove('active');
-            imageControls.style.display = 'block';
-            videoControls.style.display = 'none';
-            videoResultsContainer.style.display = 'none';
-            videoPlayerContainer.style.display = 'none';
-        } else {
-            videoModeBtn.classList.add('active');
-            imageModeBtn.classList.remove('active');
-            videoControls.style.display = 'block';
-            imageControls.style.display = 'none';
-        }
-        clearBtn.click();
-    }
-
-    imageModeBtn.addEventListener('click', () => switchGlobalMode('image'));
-    videoModeBtn.addEventListener('click', () => switchGlobalMode('video'));
 
     // ===================================================================
     // --- IMAGE MODE LOGIC ---
@@ -188,15 +119,17 @@ document.addEventListener('DOMContentLoaded', () => {
     imageLoader.addEventListener('change', (e) => {
         const file = e.target.files[0];
         if (!file) return;
+
+        state.image = new Image();
+        state.image.onload = () => {
+            canvas.width = state.image.width;
+            canvas.height = state.image.height;
+            state.imgState.boxes = [];
+            state.imgState.resultMasks = [];
+            redrawImageCanvas();
+        };
         const reader = new FileReader();
         reader.onload = (event) => {
-            state.image = new Image();
-            state.image.onload = () => {
-                const ratio = Math.min(800 / state.image.width, 600 / state.image.height);
-                canvas.width = state.image.width * ratio;
-                canvas.height = state.image.height * ratio;
-                drawImageScaled(state.image, canvas);
-            };
             state.image.src = event.target.result;
         };
         reader.readAsDataURL(file);
@@ -227,27 +160,20 @@ document.addEventListener('DOMContentLoaded', () => {
     submitImageBtn.addEventListener('click', async () => {
         if (!state.image) return alert('Please load an image.');
         
-        let apiUrl;
-        let payload = { image_base64: getBase64FromImage(state.image) };
+        let hasPrompts = false;
+        const payload = { image_base64: getBase64FromImage(state.image) };
         
-        if (state.imageAnnotationMode === 'auto') {
-            // 自动模式：无需任何提示
-            apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_auto`;
-        } else {
-            // 手动模式：需要提示
-            let hasPrompts = false;
-            if (textPromptInput.value) {
-                payload.texts = [{ text: textPromptInput.value }];
-                hasPrompts = true;
-            }
-            if (state.imgState.boxes.length > 0) {
-                payload.boxes = state.imgState.boxes;
-                hasPrompts = true;
-            }
-            if (!hasPrompts) return alert('Please provide a text or box prompt.');
-            apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict`;
+        if (textPromptInput.value) {
+            payload.texts = [{ text: textPromptInput.value }];
+            hasPrompts = true;
         }
+        if (state.imgState.boxes.length > 0) {
+            payload.boxes = state.imgState.boxes;
+            hasPrompts = true;
+        }
+        if (!hasPrompts) return alert('Please provide a text or box prompt.');
         
+        const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict`;
         await submitRequest(apiUrl, payload, 'image');
     });
 
@@ -275,26 +201,33 @@ document.addEventListener('DOMContentLoaded', () => {
                 drawImageScaled(videoPlayer, canvas);
             };
             videoPlayer.currentTime = 0;
+            videoPlayerContainer.style.display = 'block';
         };
     });
 
     trackVideoBtn.addEventListener('click', async () => {
         if (!state.videoBase64) return alert('Please load a video.');
         
-        let apiUrl;
-        let payload = { video_base64: state.videoBase64 };
-        
-        if (state.videoAnnotationMode === 'auto') {
-            // 自动模式：无需任何提示
-            apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video_auto`;
+        // Check if using text prompt or box prompt
+        if (videoTextPromptInput.value && videoTextPromptInput.value.trim() !== '') {
+            // Text-based tracking
+            const payload = {
+                video_base64: state.videoBase64,
+                text_prompt: videoTextPromptInput.value.trim()
+            };
+            const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video_text`;
+            await submitRequest(apiUrl, payload, 'video');
+        } else if (state.videoBoxes.length > 0) {
+            // Box-based tracking
+            const payload = {
+                video_base64: state.videoBase64,
+                boxes: state.videoBoxes
+            };
+            const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video`;
+            await submitRequest(apiUrl, payload, 'video');
         } else {
-            // 手动模式：需要框选提示
-            if (state.videoBoxes.length === 0) return alert('Please add at least one box prompt on the first frame.');
-            payload.boxes = state.videoBoxes;
-            apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video`;
+            alert('Please either:\n1. Enter a text prompt to track objects by description\n2. Or draw boxes on the first frame to track specific regions');
         }
-        
-        await submitRequest(apiUrl, payload, 'video');
     });
 
     frameSlider.addEventListener('input', (e) => {
@@ -317,8 +250,8 @@ document.addEventListener('DOMContentLoaded', () => {
     // ===================================================================
 
     canvas.addEventListener('mousedown', (e) => {
-        const canDrawBox = state.globalMode === 'image' && state.imgState.modes.has('box') && state.imageAnnotationMode === 'manual';
-        const canDrawVideoBox = state.globalMode === 'video' && videoPlayer.src && state.videoAnnotationMode === 'manual';
+        const canDrawBox = state.globalMode === 'image' && state.imgState.modes.has('box');
+        const canDrawVideoBox = state.globalMode === 'video' && videoPlayer.src;
         if (canDrawBox || canDrawVideoBox) {
             state.imgState.isDrawing = true;
             state.imgState.startPoint = getCanvasCoords(e);
@@ -553,4 +486,37 @@ document.addEventListener('DOMContentLoaded', () => {
             console.log(`[loadAnnotatedFrames] All frames loaded. Total: ${Object.keys(state.annotatedFrames).length}`);
         });
     }
+
+    // ===================================================================
+    // --- UI CONTROLS ---
+    // ===================================================================
+
+    clearBtn.addEventListener('click', () => {
+        if (state.globalMode === 'image') {
+            state.imgState.boxes = [];
+            state.imgState.resultMasks = [];
+            redrawImageCanvas();
+        } else {
+            state.videoBoxes = [];
+            videoTextPromptInput.value = '';
+            state.annotatedFrames = {};
+            frameSlider.value = 0;
+            frameLabel.textContent = '0';
+            if (state.videoURL) {
+                drawImageScaled(videoPlayer, canvas);
+            }
+        }
+        console.log('[UI] Cleared');
+    });
+
+    saveBtn.addEventListener('click', () => {
+        const link = document.createElement('a');
+        link.href = canvas.toDataURL('image/png');
+        link.download = `sam3-${Date.now()}.png`;
+        link.click();
+        console.log('[UI] Image saved');
+    });
+
+    // Initialize with image mode
+    imageModeBtn.click();
 });
