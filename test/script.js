@@ -263,16 +263,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const currentPoint = getCanvasCoords(e);
         const p1 = state.imgState.startPoint;
 
-        // Calculate box with center at start point, extending symmetrically based on distance to current mouse position
-        const dx = currentPoint.x - p1.x;
-        const dy = currentPoint.y - p1.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
         state.imgState.currentBox = {
-            x: p1.x - distance,
-            y: p1.y - distance,
-            w: distance * 2,
-            h: distance * 2
+            x: Math.min(p1.x, currentPoint.x),
+            y: Math.min(p1.y, currentPoint.y),
+            w: Math.abs(currentPoint.x - p1.x),
+            h: Math.abs(currentPoint.y - p1.y)
         };
 
         if (state.globalMode === 'image') {
@@ -294,17 +289,13 @@ document.addEventListener('DOMContentLoaded', () => {
         const p1 = state.imgState.startPoint;
         const p2 = getCanvasCoords(e);
 
-        // Calculate box with center at start point, extending symmetrically based on distance to mouse release position
-        const dx = p2.x - p1.x;
-        const dy = p2.y - p1.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
+        // Calculate box from start point to end point
         const newBox = {
             box: [
-                (p1.x - distance) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
-                (p1.y - distance) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
-                (p1.x + distance) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
-                (p1.y + distance) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth)
+                Math.min(p1.x, p2.x) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
+                Math.min(p1.y, p2.y) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
+                Math.max(p1.x, p2.x) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
+                Math.max(p1.y, p2.y) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth)
             ]
         };
 
