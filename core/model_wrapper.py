@@ -23,7 +23,7 @@ class SAM3Annotator:
         """
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Using device: {self.device}")
-        
+
         # Determine optimal dtype
         if self.device == "cuda" and torch.cuda.is_bf16_supported():
             self.dtype = torch.bfloat16
@@ -31,6 +31,18 @@ class SAM3Annotator:
         else:
             self.dtype = torch.float32
             print("Using float32 precision")
+
+    def aggressive_memory_cleanup(self):
+        """Aggressive memory cleanup to address gradual memory growth"""
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+        gc.collect()
+
+        if self.device == "cuda":
+            current_memory = torch.cuda.memory_allocated() / 1e9
+            print(f"[MEMORY] Aggressive cleanup performed. Current GPU memory: {current_memory:.2f} GB")
         
         try:
             # Load Image (PCS) Model
@@ -291,12 +303,10 @@ class SAM3Annotator:
 
             cap.release()
             print(f"\n[OPTIMIZE] Finished processing. Total frames returned: {len(annotated_frames)}")
-            
+
             # Final cleanup
-            if self.device == "cuda":
-                torch.cuda.empty_cache()
-            gc.collect()
-            
+            self.aggressive_memory_cleanup()
+
             return annotated_frames
 
         finally:
@@ -305,9 +315,7 @@ class SAM3Annotator:
                 os.remove(video_path)
             
             # Ensure cleanup on error
-            if self.device == "cuda":
-                torch.cuda.empty_cache()
-            gc.collect()
+            self.aggressive_memory_cleanup()
     
     def predict_video_with_text(self, video_base64: str, text_prompt: str):
         """
@@ -436,15 +444,8 @@ class SAM3Annotator:
                     if frame_idx > 0 and frame_idx % MEMORY_CLEAR_INTERVAL == 0:
                         print(f"[TEXT-TRACK] Clearing GPU memory at frame {frame_idx}...")
 
-                        # Clear PyTorch GPU cache
-                        if self.device == "cuda":
-                            torch.cuda.empty_cache()
-
-                        # Explicit garbage collection
-                        gc.collect()
-
-                        if self.device == "cuda":
-                            print(f"[TEXT-TRACK] GPU memory after cleanup: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+                        # Use aggressive memory cleanup
+                        self.aggressive_memory_cleanup()
 
                 # Clear intermediate tensors to free memory
                 del model_outputs, processed_outputs
@@ -455,12 +456,10 @@ class SAM3Annotator:
                     del mask_binary
             
             print(f"[TEXT-TRACK] Finished processing. Total frames: {len(annotated_frames)}")
-            
+
             # Final cleanup
-            if self.device == "cuda":
-                torch.cuda.empty_cache()
-            gc.collect()
-            
+            self.aggressive_memory_cleanup()
+
             return annotated_frames
 
         finally:
@@ -469,6 +468,4 @@ class SAM3Annotator:
                 os.remove(video_path)
             
             # Ensure cleanup on error
-            if self.device == "cuda":
-                torch.cuda.empty_cache()
-            gc.collect()
+            self.aggressive_memory_cleanup()
