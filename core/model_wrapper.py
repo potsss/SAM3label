@@ -34,8 +34,8 @@ class SAM3Annotator:
 
         try:
             # Load Image (PCS) Model
-            print("Loading SAM3 PCS Model (for images) from local path...")
-            self.pcs_model = Sam3Model.from_pretrained(model_path).to(self.device, dtype=self.dtype)
+            print("Loading SAM3 PCS Model (for images) from local path in float32 for stability...")
+            self.pcs_model = Sam3Model.from_pretrained(model_path).to(self.device, dtype=torch.float32)
             self.pcs_processor = Sam3Processor.from_pretrained(model_path)
             print("PCS Model and Processor loaded successfully.")
 
@@ -101,12 +101,6 @@ class SAM3Annotator:
                 return []
 
             inputs = self.pcs_processor(**processor_args).to(self.device)
-            # Manually cast floating point tensors to the correct dtype for mixed-precision inference
-            for key, value in inputs.items():
-                if torch.is_tensor(value) and value.is_floating_point():
-                    if key != 'input_boxes': # Keep input_boxes as float32
-                        inputs[key] = value.to(dtype=self.dtype)
-
             with torch.no_grad():
                 outputs = self.pcs_model(**inputs)
             
