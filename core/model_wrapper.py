@@ -104,7 +104,8 @@ class SAM3Annotator:
             # Manually cast floating point tensors to the correct dtype for mixed-precision inference
             for key, value in inputs.items():
                 if torch.is_tensor(value) and value.is_floating_point():
-                    inputs[key] = value.to(dtype=self.dtype)
+                    if key != 'input_boxes': # Keep input_boxes as float32
+                        inputs[key] = value.to(dtype=self.dtype)
 
             with torch.no_grad():
                 outputs = self.pcs_model(**inputs)
