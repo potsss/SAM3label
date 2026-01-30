@@ -116,7 +116,7 @@ class SAM3Annotator:
 
             output_masks = []
             for i, mask_tensor in enumerate(masks_tensor):
-                mask_np_binary = (mask_tensor.cpu().numpy() > 0.5).astype(np.uint8)
+                mask_np_binary = (mask_tensor.to(torch.float32).cpu().numpy() > 0.5).astype(np.uint8)
                 mask_255 = mask_np_binary * 255
                 blurred_mask = cv2.GaussianBlur(mask_255, (5, 5), 0)
                 colored_mask = np.zeros((mask_np_binary.shape[0], mask_np_binary.shape[1], 4), dtype=np.uint8)
