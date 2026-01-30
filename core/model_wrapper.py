@@ -32,18 +32,6 @@ class SAM3Annotator:
             self.dtype = torch.float32
             print("Using float32 precision")
 
-    def aggressive_memory_cleanup(self):
-        """Aggressive memory cleanup to address gradual memory growth"""
-        if self.device == "cuda":
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-
-        gc.collect()
-
-        if self.device == "cuda":
-            current_memory = torch.cuda.memory_allocated() / 1e9
-            print(f"[MEMORY] Aggressive cleanup performed. Current GPU memory: {current_memory:.2f} GB")
-        
         try:
             # Load Image (PCS) Model
             print("Loading SAM3 PCS Model (for images) from local path...")
@@ -62,7 +50,7 @@ class SAM3Annotator:
             self.pvs_tracker_model = Sam3TrackerVideoModel.from_pretrained(model_path).to(self.device, dtype=self.dtype)
             self.pvs_tracker_processor = Sam3TrackerVideoProcessor.from_pretrained(model_path)
             print("PVS Tracker Model and Processor loaded successfully.")
-            
+
             print("All models loaded successfully.")
 
         except Exception as e:
@@ -70,6 +58,18 @@ class SAM3Annotator:
             self.pcs_model = None
             self.video_pcs_model = None
             self.pvs_tracker_model = None
+
+    def aggressive_memory_cleanup(self):
+        """Aggressive memory cleanup to address gradual memory growth"""
+        if self.device == "cuda":
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+
+        gc.collect()
+
+        if self.device == "cuda":
+            current_memory = torch.cuda.memory_allocated() / 1e9
+            print(f"[MEMORY] Aggressive cleanup performed. Current GPU memory: {current_memory:.2f} GB")
 
     def predict(self, image: np.ndarray, boxes=None, texts=None):
         # ... (existing predict method for images - unchanged) ...
