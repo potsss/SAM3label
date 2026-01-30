@@ -61,289 +61,394 @@ document.addEventListener('DOMContentLoaded', () => {
     // ===================================================================
     // --- GENERAL FUNCTIONS ---
     // ===================================================================
-
-    function getCanvasCoords(e) {
-        const rect = canvas.getBoundingClientRect();
-        return { x: e.clientX - rect.left, y: e.clientY - rect.top };
-    }
-
-    // ===================================================================
-    // --- MODE SWITCHING (Image vs Video) ---
-    // ===================================================================
-
-    imageModeBtn.addEventListener('click', () => {
-        state.globalMode = 'image';
-        imageModeBtn.classList.add('active');
-        videoModeBtn.classList.remove('active');
-        imageControls.style.display = 'block';
-        videoControls.style.display = 'none';
-        videoPlayerContainer.style.display = 'none';
-        videoResultsContainer.style.display = 'none';
-        console.log('[Mode] Switched to image mode');
-    });
-
-    videoModeBtn.addEventListener('click', () => {
-        state.globalMode = 'video';
-        videoModeBtn.classList.add('active');
-        imageModeBtn.classList.remove('active');
-        imageControls.style.display = 'none';
-        videoControls.style.display = 'block';
-        if (state.videoURL) videoPlayerContainer.style.display = 'block';
-        console.log('[Mode] Switched to video mode');
-    });
-
-    // ===================================================================
-    // --- VIDEO TRACKING MODE TOGGLE (Text vs Box) ---
-    // ===================================================================
-
-    useTextPromptBtn.addEventListener('click', () => {
-        useTextPromptBtn.classList.add('active');
-        useBoxPromptBtn.classList.remove('active');
-        videoTextPromptContainer.style.display = 'block';
-        videoBoxPromptContainer.style.display = 'none';
-        console.log('[Video Mode] Switched to text prompt tracking');
-    });
-
-    useBoxPromptBtn.addEventListener('click', () => {
-        useBoxPromptBtn.classList.add('active');
-        useTextPromptBtn.classList.remove('active');
-        videoTextPromptContainer.style.display = 'none';
-        videoBoxPromptContainer.style.display = 'block';
-        console.log('[Video Mode] Switched to box prompt tracking');
-    });
-
-    // ===================================================================
-    // --- IMAGE MODE LOGIC ---
-    // ===================================================================
-
-    imageLoader.addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        state.image = new Image();
-        state.image.onload = () => {
-            canvas.width = state.image.width;
-            canvas.height = state.image.height;
-            state.imgState.boxes = [];
-            state.imgState.resultMasks = [];
-            redrawImageCanvas();
-        };
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            state.image.src = event.target.result;
-        };
-        reader.readAsDataURL(file);
-    });
-
-    function setImageMode(newMode) {
-        if (state.imgState.modes.has(newMode)) state.imgState.modes.delete(newMode);
-        else state.imgState.modes.add(newMode);
-        updateImageButtons();
-    }
-
-    function updateImageButtons() {
-        [textBtn, boxBtn].forEach(btn => btn.classList.remove('active'));
-        textPromptContainer.style.display = 'none';
-        state.imgState.modes.forEach(mode => {
-            if (mode === 'text') {
-                textBtn.classList.add('active');
-                textPromptContainer.style.display = 'block';
-            } else if (mode === 'box') {
-                boxBtn.classList.add('active');
+    
+        // ===================================================================
+        // --- MODE SWITCHING (Image vs Video) ---
+        // ===================================================================
+    
+        imageModeBtn.addEventListener('click', () => {
+            state.globalMode = 'image';
+            imageModeBtn.classList.add('active');
+            videoModeBtn.classList.remove('active');
+            imageControls.style.display = 'block';
+            videoControls.style.display = 'none';
+            videoPlayerContainer.style.display = 'none';
+            videoResultsContainer.style.display = 'none';
+            canvas.style.display = 'block'; // Ensure canvas is visible
+        
+            // If an image is loaded, redraw it
+            if (state.image) {
+                redrawImageCanvas();
+            } else {
+                // Clear canvas if no image
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+            console.log('[Mode] Switched to image mode');
+        });
+    
+        videoModeBtn.addEventListener('click', () => {
+            state.globalMode = 'video';
+            videoModeBtn.classList.add('active');
+            imageModeBtn.classList.remove('active');
+            imageControls.style.display = 'none';
+            videoControls.style.display = 'block';
+            videoPlayerContainer.style.display = 'none'; // Always hide the video player element
+            canvas.style.display = 'block'; // Ensure canvas is visible
+    
+            // If a video is loaded, draw its first frame on the canvas
+            if (state.videoURL) {
+                canvas.width = videoPlayer.videoWidth;
+                canvas.height = videoPlayer.videoHeight;
+                drawImageScaled(videoPlayer, canvas);
+                redrawVideoCanvas(); // Also draw any existing boxes
+            } else {
+                // Clear canvas if no video
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+            console.log('[Mode] Switched to video mode');
+        });
+    
+        // ===================================================================
+        // --- VIDEO TRACKING MODE TOGGLE (Text vs Box) ---
+        // ===================================================================
+    
+        useTextPromptBtn.addEventListener('click', () => {
+            useTextPromptBtn.classList.add('active');
+            useBoxPromptBtn.classList.remove('active');
+            videoTextPromptContainer.style.display = 'block';
+            videoBoxPromptContainer.style.display = 'none';
+            console.log('[Video Mode] Switched to text prompt tracking');
+        });
+    
+        useBoxPromptBtn.addEventListener('click', () => {
+            useBoxPromptBtn.classList.add('active');
+            useTextPromptBtn.classList.remove('active');
+            videoTextPromptContainer.style.display = 'none';
+            videoBoxPromptContainer.style.display = 'block';
+            console.log('[Video Mode] Switched to box prompt tracking');
+        });
+    
+        // ===================================================================
+        // --- IMAGE MODE LOGIC ---
+        // ===================================================================
+    
+        imageLoader.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+    
+            state.image = new Image();
+            state.image.onload = () => {
+                canvas.width = state.image.width;
+                canvas.height = state.image.height;
+                state.imgState.boxes = [];
+                state.imgState.resultMasks = [];
+                redrawImageCanvas();
+            };
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                state.image.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+    
+        function setImageMode(newMode) {
+            if (state.imgState.modes.has(newMode)) state.imgState.modes.delete(newMode);
+            else state.imgState.modes.add(newMode);
+            updateImageButtons();
+        }
+    
+        function updateImageButtons() {
+            [textBtn, boxBtn].forEach(btn => btn.classList.remove('active'));
+            textPromptContainer.style.display = 'none';
+            state.imgState.modes.forEach(mode => {
+                if (mode === 'text') {
+                    textBtn.classList.add('active');
+                    textPromptContainer.style.display = 'block';
+                } else if (mode === 'box') {
+                    boxBtn.classList.add('active');
+                }
+            });
+        }
+    
+        textBtn.addEventListener('click', () => setImageMode('text'));
+        boxBtn.addEventListener('click', () => setImageMode('box'));
+    
+        submitImageBtn.addEventListener('click', async () => {
+            if (!state.image) return alert('Please load an image.');
+            
+            let hasPrompts = false;
+            const payload = { image_base64: getBase64FromImage(state.image) };
+            
+            if (textPromptInput.value) {
+                payload.texts = [{ text: textPromptInput.value }];
+                hasPrompts = true;
+            }
+            if (state.imgState.boxes.length > 0) {
+                payload.boxes = state.imgState.boxes;
+                hasPrompts = true;
+            }
+            if (!hasPrompts) return alert('Please provide a text or box prompt.');
+            
+            const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict`;
+            await submitRequest(apiUrl, payload, 'image');
+        });
+    
+        // ===================================================================
+        // --- VIDEO MODE LOGIC ---
+        // ===================================================================
+    
+        videoLoader.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+    
+            // Reset video-related state
+            state.videoBoxes = [];
+            state.annotatedFrames = {};
+    
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                state.videoBase64 = event.target.result.split(',')[1];
+            };
+            reader.readAsDataURL(file);
+    
+            state.videoURL = URL.createObjectURL(file);
+            videoPlayer.src = state.videoURL;
+    
+            videoPlayer.onloadedmetadata = () => {
+                // Set canvas drawing buffer size to match video's original dimensions
+                canvas.width = videoPlayer.videoWidth;
+                canvas.height = videoPlayer.videoHeight;
+                
+                // Hide the actual video player and show the canvas
+                videoPlayerContainer.style.display = 'none';
+                canvas.style.display = 'block';
+    
+                videoPlayer.onseeked = () => {
+                    // Draw the current video frame to the canvas
+                    redrawVideoCanvas();
+                };
+                // Seek to beginning to show the first frame
+                videoPlayer.currentTime = 0.01; 
+            };
+        });
+    
+        trackVideoBtn.addEventListener('click', async () => {
+            if (!state.videoBase64) return alert('Please load a video.');
+            
+            // Check if using text prompt or box prompt
+            if (videoTextPromptInput.value && videoTextPromptInput.value.trim() !== '') {
+                // Text-based tracking
+                const payload = {
+                    video_base64: state.videoBase64,
+                    text_prompt: videoTextPromptInput.value.trim()
+                };
+                const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video_text`;
+                await submitRequest(apiUrl, payload, 'video');
+            } else if (state.videoBoxes.length > 0) {
+                // Box-based tracking
+                const payload = {
+                    video_base64: state.videoBase64,
+                    boxes: state.videoBoxes
+                };
+                const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video`;
+                await submitRequest(apiUrl, payload, 'video');
+            } else {
+                alert('Please either:\n1. Enter a text prompt to track objects by description\n2. Or draw boxes on the first frame to track specific regions');
             }
         });
+    
+        frameSlider.addEventListener('input', (e) => {
+            const frame = parseInt(e.target.value);
+            frameLabel.textContent = frame;
+            console.log(`[Slider] Moving to frame ${frame}, checking state.annotatedFrames...`);
+            console.log(`[Slider] Available frames:`, Object.keys(state.annotatedFrames));
+            
+            const frameKey = String(frame);
+            if (frameKey in state.annotatedFrames) {
+                console.log(`[Slider] Frame ${frameKey} found, drawing...`);
+                drawVideoFrame(frame);
+            } else {
+                console.warn(`[Slider] Frame ${frameKey} not loaded yet. Available: ${Object.keys(state.annotatedFrames).join(', ')}`);
+            }
+        });
+    
+        // ===================================================================
+        // --- CANVAS & DRAWING LOGIC (REFACTORED) ---
+        // ===================================================================
+    
+        function getCanvasCoords(e) {
+            // Using offsetX/Y is the most robust way to get coordinates relative to the padding edge.
+            return { x: e.offsetX, y: e.offsetY };
+        }
+    function getCurrentMedia() {
+        if (state.globalMode === 'image' && state.image) {
+            return {
+                media: state.image,
+                width: state.image.width,
+                height: state.image.height,
+            };
+        }
+        if (state.globalMode === 'video' && state.videoURL) {
+            return {
+                media: videoPlayer,
+                width: videoPlayer.videoWidth,
+                height: videoPlayer.videoHeight,
+            };
+        }
+        return null;
     }
 
-    textBtn.addEventListener('click', () => setImageMode('text'));
-    boxBtn.addEventListener('click', () => setImageMode('box'));
-
-    submitImageBtn.addEventListener('click', async () => {
-        if (!state.image) return alert('Please load an image.');
-        
-        let hasPrompts = false;
-        const payload = { image_base64: getBase64FromImage(state.image) };
-        
-        if (textPromptInput.value) {
-            payload.texts = [{ text: textPromptInput.value }];
-            hasPrompts = true;
-        }
-        if (state.imgState.boxes.length > 0) {
-            payload.boxes = state.imgState.boxes;
-            hasPrompts = true;
-        }
-        if (!hasPrompts) return alert('Please provide a text or box prompt.');
-        
-        const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict`;
-        await submitRequest(apiUrl, payload, 'image');
-    });
-
-    // ===================================================================
-    // --- VIDEO MODE LOGIC ---
-    // ===================================================================
-
-    videoLoader.addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            state.videoBase64 = event.target.result.split(',')[1];
-        };
-        reader.readAsDataURL(file);
-
-        state.videoURL = URL.createObjectURL(file);
-        videoPlayer.src = state.videoURL;
-        videoPlayer.onloadedmetadata = () => {
-            const ratio = Math.min(800 / videoPlayer.videoWidth, 600 / videoPlayer.videoHeight);
-            canvas.width = videoPlayer.videoWidth * ratio;
-            canvas.height = videoPlayer.videoHeight * ratio;
-            videoPlayer.onseeked = () => {
-                drawImageScaled(videoPlayer, canvas);
-            };
-            videoPlayer.currentTime = 0;
-            videoPlayerContainer.style.display = 'block';
-        };
-    });
-
-    trackVideoBtn.addEventListener('click', async () => {
-        if (!state.videoBase64) return alert('Please load a video.');
-        
-        // Check if using text prompt or box prompt
-        if (videoTextPromptInput.value && videoTextPromptInput.value.trim() !== '') {
-            // Text-based tracking
-            const payload = {
-                video_base64: state.videoBase64,
-                text_prompt: videoTextPromptInput.value.trim()
-            };
-            const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video_text`;
-            await submitRequest(apiUrl, payload, 'video');
-        } else if (state.videoBoxes.length > 0) {
-            // Box-based tracking
-            const payload = {
-                video_base64: state.videoBase64,
-                boxes: state.videoBoxes
-            };
-            const apiUrl = `http://${serverIpInput.value}:${serverPortInput.value}/predict_video`;
-            await submitRequest(apiUrl, payload, 'video');
-        } else {
-            alert('Please either:\n1. Enter a text prompt to track objects by description\n2. Or draw boxes on the first frame to track specific regions');
-        }
-    });
-
-    frameSlider.addEventListener('input', (e) => {
-        const frame = parseInt(e.target.value);
-        frameLabel.textContent = frame;
-        console.log(`[Slider] Moving to frame ${frame}, checking state.annotatedFrames...`);
-        console.log(`[Slider] Available frames:`, Object.keys(state.annotatedFrames));
-        
-        const frameKey = String(frame);
-        if (frameKey in state.annotatedFrames) {
-            console.log(`[Slider] Frame ${frameKey} found, drawing...`);
-            drawVideoFrame(frame);
-        } else {
-            console.warn(`[Slider] Frame ${frameKey} not loaded yet. Available: ${Object.keys(state.annotatedFrames).join(', ')}`);
-        }
-    });
-
-    // ===================================================================
-    // --- CANVAS & DRAWING LOGIC ---
-    // ===================================================================
-
     canvas.addEventListener('mousedown', (e) => {
-        const canDrawBox = state.globalMode === 'image' && state.imgState.modes.has('box');
-        const canDrawVideoBox = state.globalMode === 'video' && videoPlayer.src;
-        if (canDrawBox || canDrawVideoBox) {
+        const mediaInfo = getCurrentMedia();
+        if (!mediaInfo) return;
+
+        const canDrawBox = (state.globalMode === 'image' && state.imgState.modes.has('box')) ||
+                           (state.globalMode === 'video' && useBoxPromptBtn.classList.contains('active'));
+
+        if (canDrawBox) {
             state.imgState.isDrawing = true;
+            // Store start point in canvas-space coordinates
             state.imgState.startPoint = getCanvasCoords(e);
+            state.imgState.currentBox = null; // Reset current box
         }
     });
 
     canvas.addEventListener('mousemove', (e) => {
         if (!state.imgState.isDrawing) return;
-        const currentPoint = getCanvasCoords(e);
-        const p1 = state.imgState.startPoint;
 
+        const startPoint = state.imgState.startPoint;
+        const currentPoint = getCanvasCoords(e);
+
+        // Define the box in canvas-space coordinates
         state.imgState.currentBox = {
-            x: Math.min(p1.x, currentPoint.x),
-            y: Math.min(p1.y, currentPoint.y),
-            w: Math.abs(currentPoint.x - p1.x),
-            h: Math.abs(currentPoint.y - p1.y)
+            x: Math.min(startPoint.x, currentPoint.x),
+            y: Math.min(startPoint.y, currentPoint.y),
+            w: Math.abs(startPoint.x - currentPoint.x),
+            h: Math.abs(startPoint.y - currentPoint.y),
         };
 
+        // Redraw based on mode
         if (state.globalMode === 'image') {
             redrawImageCanvas();
         } else {
-            // Draw original video frame with the temp box
-            drawImageScaled(videoPlayer, canvas);
-            drawBoxes(state.videoBoxes, canvas.width / videoPlayer.videoWidth, 'blue');
-            if (state.imgState.currentBox) {
-                ctx.strokeStyle = 'red';
-                ctx.strokeRect(state.imgState.currentBox.x, state.imgState.currentBox.y, state.imgState.currentBox.w, state.imgState.currentBox.h);
-            }
+            redrawVideoCanvas();
         }
     });
 
     canvas.addEventListener('mouseup', (e) => {
         if (!state.imgState.isDrawing) return;
         state.imgState.isDrawing = false;
-        const p1 = state.imgState.startPoint;
-        const p2 = getCanvasCoords(e);
 
-        // Calculate box from start point to end point
+        const mediaInfo = getCurrentMedia();
+        if (!mediaInfo) return;
+
+        // Final box in canvas-space coordinates
+        const endPoint = getCanvasCoords(e);
+        const startPoint = state.imgState.startPoint;
+        const canvasBox = {
+            x1: Math.min(startPoint.x, endPoint.x),
+            y1: Math.min(startPoint.y, endPoint.y),
+            x2: Math.max(startPoint.x, endPoint.x),
+            y2: Math.max(startPoint.y, endPoint.y),
+        };
+        
+        // The canvas buffer is sized to the media, but the canvas element may be scaled by CSS.
+        // We need to convert the box from the canvas's client-space (CSS pixels) to its buffer-space.
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+
+        // Convert to original media coordinates and save
         const newBox = {
             box: [
-                Math.min(p1.x, p2.x) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
-                Math.min(p1.y, p2.y) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
-                Math.max(p1.x, p2.x) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
-                Math.max(p1.y, p2.y) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth)
+                canvasBox.x1 * scaleX,
+                canvasBox.y1 * scaleY,
+                canvasBox.x2 * scaleX,
+                canvasBox.y2 * scaleY,
             ]
         };
 
         if (state.globalMode === 'image') {
             state.imgState.boxes.push(newBox);
-            state.imgState.currentBox = null;
             redrawImageCanvas();
         } else if (state.globalMode === 'video') {
             state.videoBoxes.push(newBox);
-            state.imgState.currentBox = null;
-            drawImageScaled(videoPlayer, canvas);
-            drawBoxes(state.videoBoxes, (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth), 'blue');
+            redrawVideoCanvas();
         }
+        state.imgState.currentBox = null; // Clear temp box
     });
 
     function drawImageScaled(source, targetCanvas) {
         const targetCtx = targetCanvas.getContext('2d');
         targetCtx.clearRect(0, 0, targetCanvas.width, targetCanvas.height);
+        
+        // The canvas buffer has the same size as the source media, so we draw 1:1
         targetCtx.drawImage(source, 0, 0, targetCanvas.width, targetCanvas.height);
     }
 
     function getBase64FromImage(img) {
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = img.naturalWidth;
-        tempCanvas.height = img.naturalHeight;
+        tempCanvas.width = img.naturalWidth || img.width;
+        tempCanvas.height = img.naturalHeight || img.height;
         tempCanvas.getContext('2d').drawImage(img, 0, 0);
         return tempCanvas.toDataURL('image/jpeg').split(',')[1];
     }
 
-    function drawBoxes(boxList, scale, color) {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        boxList.forEach(b => {
-            ctx.strokeRect(b.box[0] * scale, b.box[1] * scale, (b.box[2] - b.box[0]) * scale, (b.box[3] - b.box[1]) * scale);
-        });
-    }
+    function drawBoxes(boxList, color) {
+        const mediaInfo = getCurrentMedia();
+        if (!mediaInfo) return;
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            boxList.forEach(b => {
+                ctx.strokeRect(
+                    b.box[0],
+                    b.box[1],
+                    b.box[2] - b.box[0],
+                    b.box[3] - b.box[1]
+                );
+            });    }
 
     function redrawImageCanvas() {
         if (!state.image) return;
         drawImageScaled(state.image, canvas);
-        drawBoxes(state.imgState.boxes, canvas.width / state.image.width, 'blue');
+        drawBoxes(state.imgState.boxes, 'blue');
+
+        // Draw the temporary box, scaling from CSS-space to canvas-space
         if (state.imgState.currentBox) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
             ctx.strokeStyle = 'red';
-            ctx.strokeRect(state.imgState.currentBox.x, state.imgState.currentBox.y, state.imgState.currentBox.w, state.imgState.currentBox.h);
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+                state.imgState.currentBox.x * scaleX,
+                state.imgState.currentBox.y * scaleY,
+                state.imgState.currentBox.w * scaleX,
+                state.imgState.currentBox.h * scaleY
+            );
         }
-        state.imgState.resultMasks.forEach(maskObj => {
-            if (maskObj.img) ctx.drawImage(maskObj.img, 0, 0, canvas.width, canvas.height);
-        });
+    }
+    
+    function redrawVideoCanvas() {
+        if (!videoPlayer.src) return;
+        drawImageScaled(videoPlayer, canvas);
+        drawBoxes(state.videoBoxes, 'blue');
+        
+        // Draw the temporary box, scaling from CSS-space to canvas-space
+        if (state.imgState.currentBox) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            ctx.strokeStyle = 'red';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(
+                state.imgState.currentBox.x * scaleX,
+                state.imgState.currentBox.y * scaleY,
+                state.imgState.currentBox.w * scaleX,
+                state.imgState.currentBox.h * scaleY
+            );
+        }
     }
 
     function drawVideoFrame(frameIndex) {
@@ -355,17 +460,19 @@ document.addEventListener('DOMContentLoaded', () => {
         if (annotatedImage) {
             console.log(`[drawVideoFrame] Image found. Complete: ${annotatedImage.complete}, Width: ${annotatedImage.width}, Height: ${annotatedImage.height}`);
             if (annotatedImage.complete) {
+                // Ensure canvas size matches the frame before drawing
+                canvas.width = annotatedImage.width;
+                canvas.height = annotatedImage.height;
                 drawImageScaled(annotatedImage, canvas);
                 console.log(`[drawVideoFrame] ✓ Successfully drew frame ${frameIndex} on canvas`);
             } else {
                 console.warn(`[drawVideoFrame] Image not complete yet for frame ${frameIndex}`);
-                // Wait a bit and retry
-                setTimeout(() => {
-                    if (annotatedImage.complete) {
-                        drawImageScaled(annotatedImage, canvas);
-                        console.log(`[drawVideoFrame] ✓ Drew frame ${frameIndex} after retry`);
-                    }
-                }, 100);
+                annotatedImage.onload = () => { // Add onload handler for race conditions
+                    canvas.width = annotatedImage.width;
+                    canvas.height = annotatedImage.height;
+                    drawImageScaled(annotatedImage, canvas);
+                    console.log(`[drawVideoFrame] ✓ Drew frame ${frameIndex} after onload`);
+                };
             }
         } else {
             console.warn(`[drawVideoFrame] ✗ Frame ${frameIndex} not found in state.annotatedFrames`);

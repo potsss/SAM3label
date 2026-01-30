@@ -101,6 +101,11 @@ class SAM3Annotator:
                 return []
 
             inputs = self.pcs_processor(**processor_args).to(self.device)
+            # Manually cast floating point tensors to the correct dtype for mixed-precision inference
+            for key, value in inputs.items():
+                if torch.is_tensor(value) and value.is_floating_point():
+                    inputs[key] = value.to(dtype=self.dtype)
+
             with torch.no_grad():
                 outputs = self.pcs_model(**inputs)
             
@@ -215,7 +220,7 @@ class SAM3Annotator:
                 with torch.no_grad():
                     model_outputs = self.pvs_tracker_model(
                         inference_session=inference_session,
-                        frame=inputs.pixel_values[0].to(self.device),
+                        frame=inputs.pixel_values[0].to(device=self.device, dtype=self.dtype),
                         multimask_output=False
                     )                
                 
