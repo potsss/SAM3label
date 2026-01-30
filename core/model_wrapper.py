@@ -9,7 +9,7 @@ import tempfile
 import gc
 
 # Imports for image and video processing
-from transformers import Sam3Model, Sam3Processor, Sam3TrackerVideoModel, Sam3TrackerVideoProcessor, pipeline
+from transformers import Sam3Model, Sam3Processor, Sam3TrackerVideoModel, Sam3TrackerVideoProcessor
 
 class SAM3Annotator:
     def __init__(self, model_path: str):
@@ -32,22 +32,12 @@ class SAM3Annotator:
             self.pvs_tracker_processor = Sam3TrackerVideoProcessor.from_pretrained(model_path)
             print("PVS Tracker Model and Processor loaded successfully.")
             
-            # Load Automatic Mask Generation - Try local path first, then fallback
-            print("Loading SAM3 Automatic Mask Generation pipeline...")
-            try:
-                # Try to load from local path
-                self.mask_generator = pipeline("mask-generation", model=model_path, device=0 if self.device == "cuda" else -1)
-                print("Automatic Mask Generation pipeline loaded from local path successfully.")
-            except Exception as e:
-                print(f"Warning: Could not load automatic mask generation pipeline from local path: {e}")
-                print("Automatic mask generation will be disabled. Manual annotation modes will still work.")
-                self.mask_generator = None
+            print("All models loaded successfully. Automatic mask generation will use the PCS model.")
 
         except Exception as e:
             print(f"An error occurred during model loading: {e}")
             self.pcs_model = None
             self.pvs_tracker_model = None
-            self.mask_generator = None
 
     def predict(self, image: np.ndarray, boxes=None, texts=None):
         # ... (existing predict method for images - unchanged) ...
@@ -301,7 +291,7 @@ class SAM3Annotator:
     def predict_auto_image(self, image: np.ndarray):
         """
         Automatically generate masks for all objects in an image without any prompts.
-        Uses SAM3's automatic mask generation feature.
+        Uses a grid-based point sampling approach with SAM3 PCS model.
         
         Args:
             image: Input image as numpy array (BGR format)
@@ -309,42 +299,89 @@ class SAM3Annotator:
         Returns:
             List of dictionaries with mask_base64 for each detected object
         """
-        if not self.mask_generator:
-            raise Exception(
-                "Automatic mask generator not available. "
-                "This feature requires internet connection to download the pipeline from HuggingFace, "
-                "or a locally cached model. "
-                "Please use manual annotation mode (text or box prompts) instead."
-            )
+        if not self.pcs_model:
+            raise Exception("PCS model not loaded.")
         
         print("\n[AUTO] Starting automatic mask generation for image...")
         
         pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+        image_width, image_height = pil_image.size
         
         try:
-            # Use the automatic mask generation pipeline
-            # points_per_batch controls the density of exploration points
-            outputs = self.mask_generator(pil_image, points_per_batch=64)
+            # Grid-based point sampling: create a grid of points across the image
+            # This helps detect objects at different locations
+            points_per_side = 8  # 8x8 grid = 64 points
+            step_x = image_width / (points_per_side + 1)
+            step_y = image_height / (points_per_side + 1)
             
-            print(f"[AUTO] Detected {len(outputs['masks'])} masks")
+            all_masks = []
+            detected_regions = set()  # Track detected regions to avoid duplicates
+            
+            print(f"[AUTO] Sampling {points_per_side}x{points_per_side} grid points...")
+            
+            # Sample points from the grid
+            for i in range(1, points_per_side + 1):
+                for j in range(1, points_per_side + 1):
+                    point_x = int(step_x * i)
+                    point_y = int(step_y * j)
+                    
+                    # Clip to image boundaries
+                    point_x = max(0, min(point_x, image_width - 1))
+                    point_y = max(0, min(point_y, image_height - 1))
+                    
+                    # Create point prompt
+                    input_points = [[[[point_x, point_y]]]]
+                    input_labels = [[[1]]]
+                    
+                    try:
+                        # Process with SAM3
+                        inputs = self.pcs_processor(
+                            images=pil_image,
+                            input_points=input_points,
+                            input_labels=input_labels,
+                            return_tensors="pt"
+                        ).to(self.device)
+                        
+                        with torch.no_grad():
+                            outputs = self.pcs_model(**inputs)
+                        
+                        results = self.pcs_processor.post_process_instance_segmentation(
+                            outputs, threshold=0.5, mask_threshold=0.5,
+                            target_sizes=[pil_image.size[::-1]]
+                        )[0]
+                        
+                        if "masks" in results and len(results["masks"]) > 0:
+                            # Get the first (most confident) mask from this point
+                            mask_tensor = results["masks"][0]
+                            mask_np = mask_tensor.cpu().numpy()
+                            
+                            # Create a simple hash of the mask to detect duplicates
+                            mask_hash = hash(tuple(mask_np.flatten()[:100]))  # Hash first 100 pixels
+                            
+                            if mask_hash not in detected_regions:
+                                detected_regions.add(mask_hash)
+                                all_masks.append(mask_tensor)
+                                print(f"[AUTO] Found mask at point ({point_x}, {point_y})")
+                    
+                    except Exception as e:
+                        # Continue with next point if one fails
+                        print(f"[AUTO] Point ({point_x}, {point_y}) failed: {str(e)[:50]}")
+                        continue
+            
+            print(f"[AUTO] Detected {len(all_masks)} unique masks")
             
             output_masks = []
-            
-            for i, mask in enumerate(outputs['masks']):
-                # Convert mask to numpy array if needed
-                if hasattr(mask, 'numpy'):
-                    mask_np = mask.numpy()
-                else:
-                    mask_np = np.array(mask)
-                
-                # Ensure binary mask
+            for i, mask_tensor in enumerate(all_masks):
+                mask_np = mask_tensor.cpu().numpy()
                 mask_binary = (mask_np > 0.5).astype(np.uint8) * 255
                 
                 # Create RGBA mask image
-                colored_mask = np.zeros((mask_binary.shape[0], mask_binary.shape[1], 4), dtype=np.uint8)
+                colored_mask = np.zeros((mask_binary.shape[-2], mask_binary.shape[-1], 4), dtype=np.uint8)
                 color = np.array([0, 255, 255])  # Yellow for auto-detected objects
-                colored_mask[mask_binary > 0, :3] = color
-                colored_mask[:, :, 3] = mask_binary
+                
+                mask_2d = mask_binary[0] if mask_binary.ndim == 3 else mask_binary
+                colored_mask[mask_2d > 0, :3] = color
+                colored_mask[:, :, 3] = mask_2d
                 
                 mask_img = Image.fromarray(colored_mask, 'RGBA')
                 buffer = io.BytesIO()
@@ -352,7 +389,7 @@ class SAM3Annotator:
                 img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
                 
                 output_masks.append({
-                    "label": f"object_{i}",
+                    "label": f"auto_object_{i}",
                     "mask_base64": f"data:image/png;base64,{img_str}"
                 })
             
@@ -366,7 +403,7 @@ class SAM3Annotator:
     def predict_auto_video(self, video_base64: str):
         """
         Automatically generate and segment masks for all frames in a video.
-        Uses SAM3's automatic mask generation feature on each frame.
+        Uses grid-based point sampling with SAM3 PCS model on each frame.
         
         Args:
             video_base64: Base64 encoded video file
@@ -374,13 +411,8 @@ class SAM3Annotator:
         Returns:
             Dictionary with frame indices as keys and base64 annotated frames as values
         """
-        if not self.mask_generator:
-            raise Exception(
-                "Automatic mask generator not available. "
-                "This feature requires internet connection to download the pipeline from HuggingFace, "
-                "or a locally cached model. "
-                "Please use manual annotation mode (text or box prompts) instead."
-            )
+        if not self.pcs_model:
+            raise Exception("PCS model not loaded.")
         
         print("\n[AUTO] Starting automatic video segmentation...")
         video_data = base64.b64decode(video_base64)
@@ -403,6 +435,9 @@ class SAM3Annotator:
             annotated_frames = {}
             frame_idx = 0
             MEMORY_CLEAR_INTERVAL = 5  # Clear GPU memory every N frames
+            points_per_side = 4  # 4x4 grid for video (faster than images)
+            step_x = video_width / (points_per_side + 1)
+            step_y = video_height / (points_per_side + 1)
             
             while True:
                 ret, frame = cap.read()
@@ -413,45 +448,68 @@ class SAM3Annotator:
                 print(f"--- Processing frame {frame_idx}/{total_frames-1} ---")
                 
                 pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+                frame_cv = frame.copy()
                 
-                # Generate masks automatically
-                outputs = self.mask_generator(pil_frame, points_per_batch=64)
-                masks = outputs['masks']
+                # Collect masks from grid points
+                all_masks = []
                 
-                print(f"[AUTO] Found {len(masks)} objects in frame {frame_idx}")
+                for i in range(1, points_per_side + 1):
+                    for j in range(1, points_per_side + 1):
+                        point_x = int(step_x * i)
+                        point_y = int(step_y * j)
+                        point_x = max(0, min(point_x, video_width - 1))
+                        point_y = max(0, min(point_y, video_height - 1))
+                        
+                        try:
+                            input_points = [[[[point_x, point_y]]]]
+                            input_labels = [[[1]]]
+                            
+                            inputs = self.pcs_processor(
+                                images=pil_frame,
+                                input_points=input_points,
+                                input_labels=input_labels,
+                                return_tensors="pt"
+                            ).to(self.device)
+                            
+                            with torch.no_grad():
+                                outputs = self.pcs_model(**inputs)
+                            
+                            results = self.pcs_processor.post_process_instance_segmentation(
+                                outputs, threshold=0.5, mask_threshold=0.5,
+                                target_sizes=[pil_frame.size[::-1]]
+                            )[0]
+                            
+                            if "masks" in results and len(results["masks"]) > 0:
+                                all_masks.append(results["masks"][0])
+                        except:
+                            continue
                 
-                # Create annotated frame
-                frame_cv = cv2.cvtColor(np.array(pil_frame), cv2.COLOR_RGB2BGR)
+                print(f"[AUTO] Found {len(all_masks)} masks in frame {frame_idx}")
                 
-                # Define colors for each detected object
-                n_masks = len(masks)
-                colors_bgr = [
-                    ((i * 60) % 256, (255 - (i * 60) % 256), ((i * 60 + 128) % 256))
-                    for i in range(n_masks)
-                ]
-                
-                # Apply masks with color blending
-                for i, mask in enumerate(masks):
-                    if hasattr(mask, 'numpy'):
-                        mask_np = mask.numpy()
-                    else:
-                        mask_np = np.array(mask)
+                # Apply masks to frame with colors
+                if all_masks:
+                    n_masks = len(all_masks)
+                    colors_bgr = [
+                        ((i * 60) % 256, (255 - (i * 60) % 256), ((i * 60 + 128) % 256))
+                        for i in range(n_masks)
+                    ]
                     
-                    mask_binary = (mask_np > 0.5).astype(np.uint8) * 255
-                    color_bgr = colors_bgr[i]
-                    
-                    # Create colored overlay
-                    colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
-                    colored_overlay[:, :] = color_bgr
-                    
-                    # Blend
-                    alpha = mask_binary.astype(float) / 255.0 * 0.6
-                    
-                    for c in range(3):
-                        frame_cv[:, :, c] = (
-                            frame_cv[:, :, c] * (1 - alpha) + 
-                            colored_overlay[:, :, c] * alpha
-                        ).astype(np.uint8)
+                    for i, mask_tensor in enumerate(all_masks):
+                        mask_np = mask_tensor.cpu().numpy()
+                        mask_binary = (mask_np > 0.5).astype(np.uint8) * 255
+                        mask_2d = mask_binary[0] if mask_binary.ndim == 3 else mask_binary
+                        
+                        color_bgr = colors_bgr[i]
+                        colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
+                        colored_overlay[:, :] = color_bgr
+                        
+                        alpha = mask_2d.astype(float) / 255.0 * 0.6
+                        
+                        for c in range(3):
+                            frame_cv[:, :, c] = (
+                                frame_cv[:, :, c] * (1 - alpha) + 
+                                colored_overlay[:, :, c] * alpha
+                            ).astype(np.uint8)
                 
                 # Encode frame to base64
                 frame_cv_rgb = cv2.cvtColor(frame_cv, cv2.COLOR_BGR2RGB)
