@@ -24,22 +24,30 @@ class SAM3Annotator:
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Using device: {self.device}")
         
+        # Determine optimal dtype
+        if self.device == "cuda" and torch.cuda.is_bf16_supported():
+            self.dtype = torch.bfloat16
+            print("Using bfloat16 precision")
+        else:
+            self.dtype = torch.float32
+            print("Using float32 precision")
+        
         try:
             # Load Image (PCS) Model
             print("Loading SAM3 PCS Model (for images) from local path...")
-            self.pcs_model = Sam3Model.from_pretrained(model_path).to(self.device)
+            self.pcs_model = Sam3Model.from_pretrained(model_path).to(self.device, dtype=self.dtype)
             self.pcs_processor = Sam3Processor.from_pretrained(model_path)
             print("PCS Model and Processor loaded successfully.")
 
             # Load Video PCS Model for text-based video tracking
             print("Loading SAM3 Video PCS Model (for text-based video tracking) from local path...")
-            self.video_pcs_model = Sam3VideoModel.from_pretrained(model_path).to(self.device)
+            self.video_pcs_model = Sam3VideoModel.from_pretrained(model_path).to(self.device, dtype=self.dtype)
             self.video_pcs_processor = Sam3VideoProcessor.from_pretrained(model_path)
             print("Video PCS Model and Processor loaded successfully.")
 
             # Load Video (PVS Tracker) Model for box-based video tracking
             print("Loading SAM3 PVS Tracker Model (for box-based video tracking) from local path...")
-            self.pvs_tracker_model = Sam3TrackerVideoModel.from_pretrained(model_path).to(self.device)
+            self.pvs_tracker_model = Sam3TrackerVideoModel.from_pretrained(model_path).to(self.device, dtype=self.dtype)
             self.pvs_tracker_processor = Sam3TrackerVideoProcessor.from_pretrained(model_path)
             print("PVS Tracker Model and Processor loaded successfully.")
             
@@ -148,7 +156,7 @@ class SAM3Annotator:
             print("[OPTIMIZE] Initializing PVS tracker video session.")
             inference_session = self.pvs_tracker_processor.init_video_session(
                 inference_device=self.device,
-                dtype=torch.bfloat16 if self.device == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
+                dtype=self.dtype
             )
 
             obj_ids = list(range(1, len(boxes) + 1))
@@ -353,7 +361,7 @@ class SAM3Annotator:
             inference_session = self.video_pcs_processor.init_video_session(
                 video=[pil_frame for _, pil_frame in video_frames],
                 inference_device=self.device,
-                dtype=torch.bfloat16 if self.device == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
+                dtype=self.dtype
             )
             
             # Add text prompt for tracking the concept across video
