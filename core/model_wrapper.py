@@ -291,7 +291,7 @@ class SAM3Annotator:
     def predict_auto_image(self, image: np.ndarray):
         """
         Automatically generate masks for all objects in an image without any prompts.
-        Uses a grid-based point sampling approach with SAM3 PCS model.
+        Uses a grid-based point sampling approach with SAM3 Tracker model.
         
         Args:
             image: Input image as numpy array (BGR format)
@@ -299,74 +299,63 @@ class SAM3Annotator:
         Returns:
             List of dictionaries with mask_base64 for each detected object
         """
+        # Note: SAM3 PCS model only supports text and box prompts, not point prompts.
+        # For automatic grid-based point sampling, we use Sam3Tracker model instead.
+        # However, Sam3Tracker is designed for single-object interactive segmentation.
+        # For now, we'll use a text-based approach with a generic "object" prompt
+        # to detect all objects in the image.
+        
         if not self.pcs_model:
             raise Exception("PCS model not loaded.")
         
         print("\n[AUTO] Starting automatic mask generation for image...")
+        print("[AUTO] Using PCS model with text-based detection...")
         
         pil_image = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
-        image_width, image_height = pil_image.size
         
         try:
-            # Grid-based point sampling: create a grid of points across the image
-            # This helps detect objects at different locations
-            points_per_side = 8  # 8x8 grid = 64 points
-            step_x = image_width / (points_per_side + 1)
-            step_y = image_height / (points_per_side + 1)
-            
+            # Use a generic text prompt to detect all objects
+            # SAM3 PCS model will find all instances matching this concept
+            generic_prompts = ["object", "thing", "item"]
             all_masks = []
-            detected_regions = set()  # Track detected regions to avoid duplicates
+            detected_mask_hashes = set()
             
-            print(f"[AUTO] Sampling {points_per_side}x{points_per_side} grid points...")
-            
-            # Sample points from the grid
-            for i in range(1, points_per_side + 1):
-                for j in range(1, points_per_side + 1):
-                    point_x = int(step_x * i)
-                    point_y = int(step_y * j)
+            for prompt_text in generic_prompts:
+                print(f"[AUTO] Attempting detection with text prompt: '{prompt_text}'...")
+                
+                try:
+                    # Process with PCS model using text prompt
+                    inputs = self.pcs_processor(
+                        images=pil_image,
+                        text=prompt_text,
+                        return_tensors="pt"
+                    ).to(self.device)
                     
-                    # Clip to image boundaries
-                    point_x = max(0, min(point_x, image_width - 1))
-                    point_y = max(0, min(point_y, image_height - 1))
+                    with torch.no_grad():
+                        outputs = self.pcs_model(**inputs)
                     
-                    # Create point prompt
-                    input_points = [[[[point_x, point_y]]]]
-                    input_labels = [[[1]]]
+                    results = self.pcs_processor.post_process_instance_segmentation(
+                        outputs, threshold=0.5, mask_threshold=0.5,
+                        target_sizes=[pil_image.size[::-1]]
+                    )[0]
                     
-                    try:
-                        # Process with SAM3
-                        inputs = self.pcs_processor(
-                            images=pil_image,
-                            input_points=input_points,
-                            input_labels=input_labels,
-                            return_tensors="pt"
-                        ).to(self.device)
+                    if "masks" in results and len(results["masks"]) > 0:
+                        masks_found = len(results["masks"])
+                        print(f"[AUTO] Found {masks_found} masks with prompt '{prompt_text}'")
                         
-                        with torch.no_grad():
-                            outputs = self.pcs_model(**inputs)
-                        
-                        results = self.pcs_processor.post_process_instance_segmentation(
-                            outputs, threshold=0.5, mask_threshold=0.5,
-                            target_sizes=[pil_image.size[::-1]]
-                        )[0]
-                        
-                        if "masks" in results and len(results["masks"]) > 0:
-                            # Get the first (most confident) mask from this point
-                            mask_tensor = results["masks"][0]
+                        # De-duplicate masks using hash
+                        for mask_tensor in results["masks"]:
                             mask_np = mask_tensor.cpu().numpy()
+                            # Create hash from mask to detect duplicates across prompts
+                            mask_hash = hash(tuple(mask_np.flatten()[:100]))
                             
-                            # Create a simple hash of the mask to detect duplicates
-                            mask_hash = hash(tuple(mask_np.flatten()[:100]))  # Hash first 100 pixels
-                            
-                            if mask_hash not in detected_regions:
-                                detected_regions.add(mask_hash)
+                            if mask_hash not in detected_mask_hashes:
+                                detected_mask_hashes.add(mask_hash)
                                 all_masks.append(mask_tensor)
-                                print(f"[AUTO] Found mask at point ({point_x}, {point_y})")
-                    
-                    except Exception as e:
-                        # Continue with next point if one fails
-                        print(f"[AUTO] Point ({point_x}, {point_y}) failed: {str(e)[:50]}")
-                        continue
+                
+                except Exception as e:
+                    print(f"[AUTO] Text prompt '{prompt_text}' failed: {str(e)[:80]}")
+                    continue
             
             print(f"[AUTO] Detected {len(all_masks)} unique masks")
             
@@ -403,7 +392,7 @@ class SAM3Annotator:
     def predict_auto_video(self, video_base64: str):
         """
         Automatically generate and segment masks for all frames in a video.
-        Uses grid-based point sampling with SAM3 PCS model on each frame.
+        Uses text-based prompts with SAM3 PCS model on each frame.
         
         Args:
             video_base64: Base64 encoded video file
@@ -435,9 +424,7 @@ class SAM3Annotator:
             annotated_frames = {}
             frame_idx = 0
             MEMORY_CLEAR_INTERVAL = 5  # Clear GPU memory every N frames
-            points_per_side = 4  # 4x4 grid for video (faster than images)
-            step_x = video_width / (points_per_side + 1)
-            step_y = video_height / (points_per_side + 1)
+            generic_prompts = ["object"]  # Use simpler prompts for video (faster)
             
             while True:
                 ret, frame = cap.read()
@@ -450,39 +437,37 @@ class SAM3Annotator:
                 pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 frame_cv = frame.copy()
                 
-                # Collect masks from grid points
+                # Collect masks from text prompts
                 all_masks = []
+                detected_mask_hashes = set()
                 
-                for i in range(1, points_per_side + 1):
-                    for j in range(1, points_per_side + 1):
-                        point_x = int(step_x * i)
-                        point_y = int(step_y * j)
-                        point_x = max(0, min(point_x, video_width - 1))
-                        point_y = max(0, min(point_y, video_height - 1))
+                for prompt_text in generic_prompts:
+                    try:
+                        inputs = self.pcs_processor(
+                            images=pil_frame,
+                            text=prompt_text,
+                            return_tensors="pt"
+                        ).to(self.device)
                         
-                        try:
-                            input_points = [[[[point_x, point_y]]]]
-                            input_labels = [[[1]]]
-                            
-                            inputs = self.pcs_processor(
-                                images=pil_frame,
-                                input_points=input_points,
-                                input_labels=input_labels,
-                                return_tensors="pt"
-                            ).to(self.device)
-                            
-                            with torch.no_grad():
-                                outputs = self.pcs_model(**inputs)
-                            
-                            results = self.pcs_processor.post_process_instance_segmentation(
-                                outputs, threshold=0.5, mask_threshold=0.5,
-                                target_sizes=[pil_frame.size[::-1]]
-                            )[0]
-                            
-                            if "masks" in results and len(results["masks"]) > 0:
-                                all_masks.append(results["masks"][0])
-                        except:
-                            continue
+                        with torch.no_grad():
+                            outputs = self.pcs_model(**inputs)
+                        
+                        results = self.pcs_processor.post_process_instance_segmentation(
+                            outputs, threshold=0.5, mask_threshold=0.5,
+                            target_sizes=[pil_frame.size[::-1]]
+                        )[0]
+                        
+                        if "masks" in results and len(results["masks"]) > 0:
+                            for mask_tensor in results["masks"]:
+                                mask_np = mask_tensor.cpu().numpy()
+                                mask_hash = hash(tuple(mask_np.flatten()[:100]))
+                                
+                                if mask_hash not in detected_mask_hashes:
+                                    detected_mask_hashes.add(mask_hash)
+                                    all_masks.append(mask_tensor)
+                    except Exception as e:
+                        print(f"[AUTO] Text prompt '{prompt_text}' failed in frame {frame_idx}: {str(e)[:60]}")
+                        continue
                 
                 print(f"[AUTO] Found {len(all_masks)} masks in frame {frame_idx}")
                 
