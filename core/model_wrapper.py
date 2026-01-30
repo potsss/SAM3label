@@ -9,12 +9,17 @@ import tempfile
 import gc
 
 # Imports for image and video processing
-from transformers import Sam3Model, Sam3Processor, Sam3TrackerVideoModel, Sam3TrackerVideoProcessor
+from transformers import (
+    Sam3Model, Sam3Processor,
+    Sam3VideoModel, Sam3VideoProcessor,
+    Sam3TrackerVideoModel, Sam3TrackerVideoProcessor
+)
 
 class SAM3Annotator:
     def __init__(self, model_path: str):
         """
-        Initializes the PCS model for images and the PVS Tracker model for videos.
+        Initializes the PCS model for images, Video PCS model for text-based video tracking,
+        and the PVS Tracker model for box-based video tracking.
         """
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Using device: {self.device}")
@@ -26,17 +31,24 @@ class SAM3Annotator:
             self.pcs_processor = Sam3Processor.from_pretrained(model_path)
             print("PCS Model and Processor loaded successfully.")
 
-            # Load Video (PVS Tracker) Model
-            print("Loading SAM3 PVS Tracker Model (for videos) from local path...")
+            # Load Video PCS Model for text-based video tracking
+            print("Loading SAM3 Video PCS Model (for text-based video tracking) from local path...")
+            self.video_pcs_model = Sam3VideoModel.from_pretrained(model_path).to(self.device)
+            self.video_pcs_processor = Sam3VideoProcessor.from_pretrained(model_path)
+            print("Video PCS Model and Processor loaded successfully.")
+
+            # Load Video (PVS Tracker) Model for box-based video tracking
+            print("Loading SAM3 PVS Tracker Model (for box-based video tracking) from local path...")
             self.pvs_tracker_model = Sam3TrackerVideoModel.from_pretrained(model_path).to(self.device)
             self.pvs_tracker_processor = Sam3TrackerVideoProcessor.from_pretrained(model_path)
             print("PVS Tracker Model and Processor loaded successfully.")
             
-            print("All models loaded successfully. Automatic mask generation will use the PCS model.")
+            print("All models loaded successfully.")
 
         except Exception as e:
             print(f"An error occurred during model loading: {e}")
             self.pcs_model = None
+            self.video_pcs_model = None
             self.pvs_tracker_model = None
 
     def predict(self, image: np.ndarray, boxes=None, texts=None):
@@ -290,8 +302,8 @@ class SAM3Annotator:
     
     def predict_video_with_text(self, video_base64: str, text_prompt: str):
         """
-        Process video with text prompt to detect and track specific objects.
-        Uses SAM3 PVS Tracker video model with text-based concept prompt.
+        Process video with text prompt to detect and track specific objects across frames.
+        Uses SAM3 Video PCS model for text-based concept detection and tracking.
         
         Args:
             video_base64: Base64 encoded video file
@@ -300,10 +312,10 @@ class SAM3Annotator:
         Returns:
             Dictionary with frame indices as keys and base64 annotated frames as values
         """
-        if not self.pvs_tracker_model:
-            raise Exception("Video tracker model not loaded.")
+        if not self.video_pcs_model:
+            raise Exception("Video PCS model not loaded.")
 
-        print(f"\n[TEXT-TRACK] Starting video tracking with prompt: '{text_prompt}'")
+        print(f"\n[TEXT-TRACK] Starting video text-based tracking with prompt: '{text_prompt}'")
         video_data = base64.b64decode(video_base64)
         
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmpfile:
@@ -321,7 +333,7 @@ class SAM3Annotator:
             
             print(f"[TEXT-TRACK] Video info: {video_width}x{video_height}, Total frames: {total_frames}")
             
-            # Load all frames (for text-based tracking, all frames are used for concept propagation)
+            # Load all frames for video processing
             print("[TEXT-TRACK] Loading all frames into memory...")
             video_frames = []
             while True:
@@ -337,30 +349,31 @@ class SAM3Annotator:
             print(f"[TEXT-TRACK] Loaded {len(video_frames)} frames")
             
             # Initialize video session for text-based tracking
-            print("[TEXT-TRACK] Initializing PVS tracker video session...")
-            inference_session = self.pvs_tracker_processor.init_video_session(
+            print("[TEXT-TRACK] Initializing video inference session...")
+            inference_session = self.video_pcs_processor.init_video_session(
+                video=[pil_frame for _, pil_frame in video_frames],
                 inference_device=self.device,
                 dtype=torch.bfloat16 if self.device == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
             )
             
             # Add text prompt for tracking the concept across video
             print(f"[TEXT-TRACK] Adding text prompt: '{text_prompt}'")
-            inference_session = self.pvs_tracker_processor.add_text_prompt(
+            inference_session = self.video_pcs_processor.add_text_prompt(
                 inference_session=inference_session,
                 text=text_prompt,
             )
             
             annotated_frames = {}
             
-            # Process video frames
+            # Process video frames with text-based concept propagation
             print("[TEXT-TRACK] Processing frames with text concept tracking...")
-            for model_outputs in self.pvs_tracker_model.propagate_in_video_iterator(
+            for model_outputs in self.video_pcs_model.propagate_in_video_iterator(
                 inference_session=inference_session, max_frame_num_to_track=len(video_frames)
             ):
                 frame_idx = model_outputs.frame_idx
                 
                 # Post-process outputs
-                processed_outputs = self.pvs_tracker_processor.postprocess_outputs(
+                processed_outputs = self.video_pcs_processor.postprocess_outputs(
                     inference_session, model_outputs
                 )
                 
@@ -371,20 +384,19 @@ class SAM3Annotator:
                     # Apply masks to frame
                     if "masks" in processed_outputs and len(processed_outputs["masks"]) > 0:
                         masks = processed_outputs["masks"]
-                        object_ids = processed_outputs.get("object_ids", list(range(len(masks))))
                         
-                        print(f"[TEXT-TRACK] Frame {frame_idx}: Detected {len(masks)} objects")
+                        print(f"[TEXT-TRACK] Frame {frame_idx}: Detected {len(masks)} matching objects")
                         
-                        # Apply each mask with a different color
-                        for obj_idx, (mask, obj_id) in enumerate(zip(masks, object_ids)):
+                        # Apply each mask with overlay
+                        for mask_idx, mask in enumerate(masks):
                             mask_np = mask.cpu().numpy() if torch.is_tensor(mask) else mask
                             mask_binary = (mask_np > 0.5).astype(np.uint8)
                             
-                            # Use different colors for different objects
+                            # Use different colors for different detections
                             color_bgr = (
-                                int((obj_id * 50) % 256),
-                                int((obj_id * 100) % 256),
-                                int((obj_id * 150) % 256)
+                                int((mask_idx * 60) % 256),
+                                int((255 - (mask_idx * 60) % 256)),
+                                int(((mask_idx * 60 + 128) % 256))
                             )
                             
                             colored_overlay = np.zeros_like(frame_cv, dtype=np.uint8)
