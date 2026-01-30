@@ -219,7 +219,8 @@ class SAM3Annotator:
                     print(f"[OPTIMIZE] Found {video_res_masks.shape[0]} masks for frame {frame_idx}.")
                     
                     # Get raw mask values and apply threshold
-                    masks_raw = video_res_masks.cpu().numpy()
+                    # Convert to float32 to avoid BFloat16 errors when converting to numpy
+                    masks_raw = video_res_masks.to(torch.float32).cpu().numpy()
                     masks_binary = (masks_raw > 0.5).astype(np.uint8) * 255
                     
                     # Create annotated frame
@@ -397,7 +398,7 @@ class SAM3Annotator:
                         
                         # Apply each mask with overlay
                         for mask_idx, mask in enumerate(masks):
-                            mask_np = mask.cpu().numpy() if torch.is_tensor(mask) else mask
+                            mask_np = mask.to(torch.float32).cpu().numpy() if torch.is_tensor(mask) else mask
                             mask_binary = (mask_np > 0.5).astype(np.uint8)
                             
                             # Use different colors for different detections
