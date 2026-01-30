@@ -262,7 +262,19 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!state.imgState.isDrawing) return;
         const currentPoint = getCanvasCoords(e);
         const p1 = state.imgState.startPoint;
-        state.imgState.currentBox = { x: Math.min(p1.x, currentPoint.x), y: Math.min(p1.y, currentPoint.y), w: Math.abs(p1.x - currentPoint.x), h: Math.abs(p1.y - currentPoint.y) };
+
+        // Calculate box with center at start point, extending symmetrically based on distance to current mouse position
+        const dx = currentPoint.x - p1.x;
+        const dy = currentPoint.y - p1.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        state.imgState.currentBox = {
+            x: p1.x - distance,
+            y: p1.y - distance,
+            w: distance * 2,
+            h: distance * 2
+        };
+
         if (state.globalMode === 'image') {
             redrawImageCanvas();
         } else {
@@ -281,9 +293,21 @@ document.addEventListener('DOMContentLoaded', () => {
         state.imgState.isDrawing = false;
         const p1 = state.imgState.startPoint;
         const p2 = getCanvasCoords(e);
-        const scale = (state.globalMode === 'image') ? (canvas.width / state.image.width) : (canvas.width / videoPlayer.videoWidth);
-        const newBox = { box: [Math.min(p1.x, p2.x) / scale, Math.min(p1.y, p2.y) / scale, Math.max(p1.x, p2.x) / scale, Math.max(p1.y, p2.y) / scale] };
-        
+
+        // Calculate box with center at start point, extending symmetrically based on distance to mouse release position
+        const dx = p2.x - p1.x;
+        const dy = p2.y - p1.y;
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        const newBox = {
+            box: [
+                (p1.x - distance) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
+                (p1.y - distance) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
+                (p1.x + distance) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth),
+                (p1.y + distance) / (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth)
+            ]
+        };
+
         if (state.globalMode === 'image') {
             state.imgState.boxes.push(newBox);
             state.imgState.currentBox = null;
@@ -292,7 +316,7 @@ document.addEventListener('DOMContentLoaded', () => {
             state.videoBoxes.push(newBox);
             state.imgState.currentBox = null;
             drawImageScaled(videoPlayer, canvas);
-            drawBoxes(state.videoBoxes, scale, 'blue');
+            drawBoxes(state.videoBoxes, (state.globalMode === 'image' ? canvas.width / state.image.width : canvas.width / videoPlayer.videoWidth), 'blue');
         }
     });
 
