@@ -38,6 +38,14 @@ document.addEventListener('DOMContentLoaded', () => {
     const videoTextPromptInput = document.getElementById('video-text-prompt');
 
     // --- State ---
+    const MASK_COLORS = [
+        'rgba(255, 0, 0, 0.5)',   // Red
+        'rgba(0, 255, 0, 0.5)',   // Green
+        'rgba(0, 0, 255, 0.5)',   // Blue
+        'rgba(255, 255, 0, 0.5)', // Yellow
+        'rgba(255, 0, 255, 0.5)', // Magenta
+        'rgba(0, 255, 255, 0.5)', // Cyan
+    ];
     let state = {
         globalMode: 'image', // 'image' or 'video'
         image: null,
@@ -407,11 +415,40 @@ document.addEventListener('DOMContentLoaded', () => {
                     b.box[2] - b.box[0],
                     b.box[3] - b.box[1]
                 );
-            });    }
+            });
+    }
+
+    function drawMasks() {
+        if (state.imgState.resultMasks.length === 0) return;
+
+        state.imgState.resultMasks.forEach((maskObj, index) => {
+            if (maskObj.img && maskObj.img.complete) {
+                const color = MASK_COLORS[index % MASK_COLORS.length];
+
+                // Use a temporary canvas to create the colored overlay
+                const tempCanvas = document.createElement('canvas');
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCanvas.width = maskObj.img.width;
+                tempCanvas.height = maskObj.img.height;
+
+                // Draw the mask image on the temporary canvas
+                tempCtx.drawImage(maskObj.img, 0, 0);
+
+                // Change composite mode to apply color
+                tempCtx.globalCompositeOperation = 'source-in';
+                tempCtx.fillStyle = color;
+                tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+
+                // Draw the colored mask onto the main canvas
+                ctx.drawImage(tempCanvas, 0, 0);
+            }
+        });
+    }
 
     function redrawImageCanvas() {
         if (!state.image) return;
         drawImageScaled(state.image, canvas);
+        drawMasks();
         drawBoxes(state.imgState.boxes, 'blue');
 
         // Draw the temporary box, scaling from CSS-space to canvas-space
