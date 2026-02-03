@@ -196,7 +196,8 @@ class SAM3Annotator:
                     print("[OPTIMIZE] End of video stream.")
                     break
                 
-                print(f"--- Processing frame {frame_idx}/{total_frames-1} ---")
+                if frame_idx % 10 == 0:
+                    print(f"--- Processing frame {frame_idx}/{total_frames-1} ---")
 
                 pil_frame = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 inputs = self.pvs_tracker_processor(images=pil_frame, return_tensors="pt")
@@ -228,7 +229,8 @@ class SAM3Annotator:
                 # Process and encode frame
                 if video_res_masks_list:
                     video_res_masks = video_res_masks_list[0].squeeze(1)
-                    print(f"[OPTIMIZE] Found {video_res_masks.shape[0]} masks for frame {frame_idx}.")
+                    if frame_idx % 10 == 0:
+                        print(f"[OPTIMIZE] Found {video_res_masks.shape[0]} masks for frame {frame_idx}.")
                     
                     # Get raw mask values and apply threshold
                     # Convert to float32 to avoid BFloat16 errors when converting to numpy
@@ -275,7 +277,6 @@ class SAM3Annotator:
                 final_frame_pil.convert("RGB").save(buffer, format="JPEG", quality=90)
                 b64_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
                 
-                print(f"[OPTIMIZE] Encoded frame {frame_idx} to base64 (size: {len(b64_str)} bytes).")
                 annotated_frames[str(frame_idx)] = f"data:image/jpeg;base64,{b64_str}"
                 
                 # Key optimization: Periodic memory cleanup
@@ -404,8 +405,8 @@ class SAM3Annotator:
                     # Apply masks to frame
                     if "masks" in processed_outputs and len(processed_outputs["masks"]) > 0:
                         masks = processed_outputs["masks"]
-
-                        print(f"[TEXT-TRACK] Frame {frame_idx}: Detected {len(masks)} matching objects")
+                        if frame_idx % 10 == 0:
+                            print(f"[TEXT-TRACK] Frame {frame_idx}: Detected {len(masks)} matching objects")
 
                         # Apply each mask with overlay
                         for mask_idx, mask in enumerate(masks):
